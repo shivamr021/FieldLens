@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Photo Verify | Admin Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        @import url('https://rsms.me/inter/inter.css');
+        .modal { display: none; }
+        .modal.is-open { display: flex; }
+    </style>
+</head>
+<body class="bg-gray-900 text-white">
+
+    <div class="container mx-auto p-4 md:p-8">
+        <header class="mb-8 flex justify-between items-center">
+            <div>
+                <h1 class="text-3xl font-bold text-cyan-400">Admin Dashboard</h1>
+                <p class="text-gray-400">Create and monitor photo verification jobs.</p>
+            </div>
+            <button id="createJobBtn" class="bg-cyan-500 hover:bg-cyan-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-transform transform hover:scale-105">
+                + Create New Job
+            </button>
+        </header>
+
+        <main id="jobsContainer" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <!-- Job cards will be inserted here -->
+        </main>
+    </div>
+
+    <!-- Modal for Creating a New Job -->
+    <div id="jobModal" class="modal fixed inset-0 bg-black bg-opacity-70 items-center justify-center p-4">
+        <div class="bg-gray-800 rounded-lg shadow-2xl p-6 w-full max-w-md">
+            <h2 class="text-2xl font-bold mb-4 text-cyan-400">Create a New Job</h2>
+            <form id="createJobForm">
+                <div class="mb-4">
+                    <label for="workerPhone" class="block text-gray-400 text-sm font-bold mb-2">Worker's WhatsApp Number:</label>
+                    <input type="text" id="workerPhone" name="workerPhone" class="shadow-inner appearance-none border border-gray-700 rounded-lg w-full py-2 px-3 bg-gray-900 text-white leading-tight focus:outline-none focus:ring-2 focus:ring-cyan-500" placeholder="e.g., whatsapp:+919876543210" required>
+                    <p class="text-xs text-gray-500 mt-1">Must be in the format `whatsapp:+[country code][number]`.</p>
+                </div>
+                <div class="mb-6">
+                    <label class="block text-gray-400 text-sm font-bold mb-2">Required Photo Types:</label>
+                    <div class="flex items-center">
+                        <input type="checkbox" id="typeLabel" name="requiredTypes" value="LABEL" class="w-4 h-4 text-cyan-600 bg-gray-700 border-gray-600 rounded focus:ring-cyan-500" checked>
+                        <label for="typeLabel" class="ml-2 text-sm font-medium text-gray-300">Label</label>
+                    </div>
+                    <div class="flex items-center mt-2">
+                        <input type="checkbox" id="typeAzimuth" name="requiredTypes" value="AZIMUTH" class="w-4 h-4 text-cyan-600 bg-gray-700 border-gray-600 rounded focus:ring-cyan-500" checked>
+                        <label for="typeAzimuth" class="ml-2 text-sm font-medium text-gray-300">Azimuth</label>
+                    </div>
+                </div>
+                <div class="flex items-center justify-end">
+                    <button type="button" id="cancelBtn" class="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg mr-2">Cancel</button>
+                    <button type="submit" class="bg-cyan-500 hover:bg-cyan-600 text-white font-bold py-2 px-4 rounded-lg">Create Job</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Template for Job Card -->
+    <template id="jobCardTemplate">
+        <div class="bg-gray-800 rounded-lg shadow-lg p-5 flex flex-col justify-between">
+            <div>
+                <div class="flex justify-between items-start mb-3">
+                    <span class="job-id font-mono text-xs bg-gray-700 text-cyan-400 px-2 py-1 rounded"></span>
+                    <span class="job-status font-bold text-sm px-3 py-1 rounded-full"></span>
+                </div>
+                <p class="text-gray-400 text-sm mb-1">Worker:</p>
+                <p class="job-worker-phone font-semibold text-lg text-white mb-4"></p>
+                <p class="text-gray-400 text-sm mb-2">Required Photos:</p>
+                <div class="job-required-types flex space-x-2 mb-4"></div>
+                <hr class="border-gray-700 my-4">
+                <h4 class="font-bold mb-3 text-gray-300">Submitted Photos</h4>
+                <div class="job-photos grid grid-cols-2 gap-3 h-32 overflow-y-auto">
+                    <!-- Photos will be added here -->
+                </div>
+            </div>
+            <button class="refresh-job-btn mt-4 w-full bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg text-sm">Refresh</button>
+        </div>
+    </template>
+
+<script>
+    const API_BASE_URL = 'http://127.0.0.1:8000/api'; // Use your ngrok URL for production/testing
+    const jobsContainer = document.getElementById('jobsContainer');
+    const jobCardTemplate = document.getElementById('jobCardTemplate');
+    const jobModal = document.getElementById('jobModal');
+    const createJobBtn = document.getElementById('createJobBtn');
+    const cancelBtn = document.getElementById('cancelBtn');
+    const createJobForm = document.getElementById('createJobForm');
+
+    const getStatusClass = (status) => {
+        switch (status) {
+            case 'PENDING': return 'bg-yellow-900 text-yellow-300';
+            case 'IN_PROGRESS': return 'bg-blue-900 text-blue-300';
+            case 'DONE': return 'bg-green-900 text-green-300';
+            default: return 'bg-gray-700 text-gray-300';
+        }
+    };
+
+    const createJobCard = (job) => {
+        const card = jobCardTemplate.content.cloneNode(true).children[0];
+        card.dataset.jobId = job.id;
+        card.querySelector('.job-id').textContent = `Job ID: ${job.id}`;
+        const statusEl = card.querySelector('.job-status');
+        statusEl.textContent = job.status;
+        statusEl.className = `job-status font-bold text-sm px-3 py-1 rounded-full ${getStatusClass(job.status)}`;
+        card.querySelector('.job-worker-phone').textContent = job.workerPhone;
+
+        const requiredTypesContainer = card.querySelector('.job-required-types');
+        requiredTypesContainer.innerHTML = '';
+        job.requiredTypes.forEach(type => {
+            const typeEl = document.createElement('span');
+            typeEl.className = 'bg-gray-700 text-gray-300 text-xs font-medium px-2.5 py-0.5 rounded';
+            typeEl.textContent = type;
+            requiredTypesContainer.appendChild(typeEl);
+        });
+        
+        card.querySelector('.refresh-job-btn').addEventListener('click', () => fetchJobDetails(job.id));
+
+        return card;
+    };
+
+    const updateJobPhotos = (card, photos) => {
+        const photosContainer = card.querySelector('.job-photos');
+        photosContainer.innerHTML = '<p class="text-gray-500 text-sm col-span-2">No photos submitted yet.</p>';
+        if (photos && photos.length > 0) {
+            photosContainer.innerHTML = '';
+            photos.forEach(photo => {
+                const photoEl = document.createElement('div');
+                photoEl.className = 'flex flex-col items-center p-2 rounded-lg';
+                const img = document.createElement('img');
+                img.src = photo.s3Url.startsWith('/static') ? `http://127.0.0.1:8000${photo.s3Url}` : photo.s3Url;
+                img.alt = `Photo for job ${photo.jobId}`;
+                img.className = 'w-16 h-16 object-cover rounded-md mb-2 border-2';
+                img.onerror = () => { img.src = 'https://placehold.co/100x100/334155/e2e8f0?text=Error'; };
+
+                const photoStatus = document.createElement('span');
+                photoStatus.textContent = `${photo.type}: ${photo.status}`;
+                photoStatus.className = `text-xs font-semibold ${photo.status === 'PASS' ? 'text-green-400' : 'text-red-400'}`;
+                
+                img.className += (photo.status === 'PASS' ? ' border-green-500' : ' border-red-500');
+
+                photoEl.appendChild(img);
+                photoEl.appendChild(photoStatus);
+                photosContainer.appendChild(photoEl);
+            });
+        }
+    };
+
+    const fetchAllJobs = async () => {
+        try {
+            const response = await fetch(`${API_BASE_URL}/jobs`);
+            if (!response.ok) throw new Error('Failed to fetch jobs');
+            const jobs = await response.json();
+            jobsContainer.innerHTML = '';
+            for (const job of jobs) {
+                const card = createJobCard(job);
+                jobsContainer.appendChild(card);
+                fetchJobDetails(job.id, card);
+            }
+        } catch (error) {
+            console.error('Error fetching jobs:', error);
+            jobsContainer.innerHTML = `<p class="text-red-500 col-span-full">Error loading jobs. Is the backend server running?</p>`;
+        }
+    };
+
+    const fetchJobDetails = async (jobId, cardElement) => {
+        try {
+            const card = cardElement || jobsContainer.querySelector(`[data-job-id='${jobId}']`);
+            if (!card) return;
+
+            const response = await fetch(`${API_BASE_URL}/jobs/${jobId}`);
+            if (!response.ok) throw new Error(`Failed to fetch details for job ${jobId}`);
+            const data = await response.json();
+            
+            // Re-render status and types in case they changed
+            const statusEl = card.querySelector('.job-status');
+            statusEl.textContent = data.job.status;
+            statusEl.className = `job-status font-bold text-sm px-3 py-1 rounded-full ${getStatusClass(data.job.status)}`;
+
+            updateJobPhotos(card, data.photos);
+
+        } catch (error) {
+            console.error(`Error fetching job details for ${jobId}:`, error);
+        }
+    };
+    
+    // Modal Logic
+    createJobBtn.addEventListener('click', () => jobModal.classList.add('is-open'));
+    cancelBtn.addEventListener('click', () => jobModal.classList.remove('is-open'));
+    
+    createJobForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const formData = new FormData(e.target);
+        const workerPhone = formData.get('workerPhone');
+        const requiredTypes = formData.getAll('requiredTypes');
+
+        try {
+            const response = await fetch(`${API_BASE_URL}/jobs`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ workerPhone, requiredTypes }),
+            });
+            if (!response.ok) {
+                throw new Error('Failed to create job.');
+            }
+            jobModal.classList.remove('is-open');
+            e.target.reset();
+            fetchAllJobs(); // Refresh list
+        } catch (error) {
+            console.error('Error creating job:', error);
+            alert('Failed to create job. Check the console for details.');
+        }
+    });
+
+    // Initial Load
+    fetchAllJobs();
+</script>
+</body>
+</html>

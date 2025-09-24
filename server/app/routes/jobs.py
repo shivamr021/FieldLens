@@ -7,17 +7,34 @@ from app.deps import get_db
 from app.schemas import CreateJob, JobOut, PhotoOut
 from app.models import new_job
 from app.services.storage_s3 import presign_url
+from app.utils import normalize_phone # <-- 1. IMPORT THE NORMALIZER
 
 router = APIRouter()
-
 
 def oid(obj):
     return str(obj["_id"]) if isinstance(obj.get("_id"), ObjectId) else obj.get("_id")
 
+@router.get("/jobs", response_model=List[JobOut])
+def list_jobs(db=Depends(get_db)):
+    jobs_cursor = db.jobs.find().sort("createdAt", -1)
+    jobs_list = []
+    for j in jobs_cursor:
+        jobs_list.append({
+            "id": oid(j),
+            "workerPhone": j["workerPhone"],
+            "requiredTypes": j["requiredTypes"],
+            "currentIndex": j["currentIndex"],
+            "status": j["status"],
+        })
+    return jobs_list
 
 @router.post("/jobs", response_model=JobOut)
 def create_job(payload: CreateJob, db=Depends(get_db)):
-    j = new_job(payload.workerPhone, payload.requiredTypes)
+    # --- 2. NORMALIZE THE PHONE NUMBER BEFORE SAVING ---
+    normalized_phone = normalize_phone(payload.workerPhone)
+    j = new_job(normalized_phone, payload.requiredTypes)
+    # --- END OF CHANGE ---
+    
     res = db.jobs.insert_one(j)
     j["_id"] = res.inserted_id
     return {
@@ -28,10 +45,13 @@ def create_job(payload: CreateJob, db=Depends(get_db)):
         "status": j["status"],
     }
 
-
 @router.get("/jobs/{job_id}")
 def get_job(job_id: str, db=Depends(get_db)):
-    job = db.jobs.find_one({"_id": ObjectId(job_id)})
+    try:
+        job = db.jobs.find_one({"_id": ObjectId(job_id)})
+    except Exception:
+        raise HTTPException(404, "Invalid Job ID format")
+        
     if not job:
         raise HTTPException(404, "Job not found")
     photos = list(db.photos.find({"jobId": job_id}))
@@ -50,10 +70,13 @@ def get_job(job_id: str, db=Depends(get_db)):
     job["_id"] = oid(job)
     return {"job": job, "photos": items}
 
-
 @router.get("/jobs/{job_id}/export.csv")
 def export_csv(job_id: str, db=Depends(get_db)):
-    job = db.jobs.find_one({"_id": ObjectId(job_id)})
+    try:
+        job = db.jobs.find_one({"_id": ObjectId(job_id)})
+    except Exception:
+        raise HTTPException(404, "Invalid Job ID format")
+
     if not job:
         raise HTTPException(404, "Job not found")
 
@@ -75,3 +98,4 @@ def export_csv(job_id: str, db=Depends(get_db)):
         "Content-Disposition": f'attachment; filename="job_{job_id}.csv"'
     }
     return Response(content=data, headers=headers, media_type="text/csv")
+

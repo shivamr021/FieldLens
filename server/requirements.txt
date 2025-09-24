@@ -12,3 +12,6 @@ pytesseract==0.3.10
 # local
 mongomock==4.1.2
 python-multipart==0.0.9
+
+# twilio official lib
+twilio==8.11.0
