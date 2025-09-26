@@ -33,14 +33,15 @@ def put_bytes(key: str, data: bytes) -> str:
 
 def presign_url(key: str, expires: int = 3600) -> str:
     if USE_LOCAL:
-        # served by app.main via StaticFiles
-        return f"/static/{key}"
+        # served by app.main via StaticFiles (mounted at /uploads)
+        return f"/uploads/{key}"
     else:
         return s3.generate_presigned_url(
             "get_object",
             Params={"Bucket": BUCKET, "Key": key},
             ExpiresIn=expires,
         )
+
 
 
 def new_image_key(job_id: str, kind: str, ext: str = "jpg") -> str:

@@ -4,7 +4,7 @@ from datetime import datetime
 # Mongo “documents” (runtime dicts) – not Pydantic models.
 
 JobStatus = Literal["PENDING", "IN_PROGRESS", "DONE"]
-PhotoType = Literal["LABEL", "AZIMUTH"]
+PhotoType = str
 PhotoStatus = Literal["PASS", "FAIL"]
 
 

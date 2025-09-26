@@ -4,7 +4,6 @@ from fastapi import APIRouter, Depends, Request, Response
 from twilio.twiml.messaging_response import MessagingResponse
 
 from app.deps import get_db
-from app.utils import normalize_phone, EXAMPLE_URL_LABEL, EXAMPLE_URL_AZIMUTH
 from app.services.validate import run_pipeline
 from app.services.imaging import load_bgr
 from app.services.storage_s3 import new_image_key, put_bytes
@@ -31,10 +30,16 @@ def _current_expected_type(job):
     return None
 
 
+from app.utils import (
+    normalize_phone,
+    type_prompt,
+    type_example_url,
+    is_validated_type,
+)
+
 def _prompt_for(ptype: str) -> tuple[str, str]:
-    if ptype == "AZIMUTH":
-        return ("Please send the *Azimuth Photo* with a clear compass reading.", EXAMPLE_URL_AZIMUTH)
-    return ("Please send the *Label Photo* (flat, sharp, no glare).", EXAMPLE_URL_LABEL)
+    """Return (prompt, example_url) for a given canonical type."""
+    return (type_prompt(ptype), type_example_url(ptype))
 
 
 def build_twiml_reply(body_text: str, media_urls: list[str] | None = None) -> Response:
@@ -84,7 +89,23 @@ async def whatsapp_webhook(request: Request, db=Depends(get_db)):
     img = load_bgr(data)
 
     prev_phashes = [p.get("phash") for p in db.photos.find({"jobId": str(job["_id"])}, {"phash": 1}) if p.get("phash")]
-    result = run_pipeline(img, job_ctx={"expectedType": expected}, existing_phashes=prev_phashes)
+    
+    # ---- NON-BREAKING: validate only for known validated types; otherwise accept/store ----
+    if expected and is_validated_type(expected):
+        result = run_pipeline(img, job_ctx={"expectedType": expected}, existing_phashes=prev_phashes)
+    else:
+        # Minimal, safe result for non-validated types (you can expand later)
+        result = {
+            "type": expected or "PHOTO",
+            "status": "PASS",
+            "reason": [],
+            "fields": {},
+            "checks": {},
+            # Optional: if your imaging service has a phash helper, you can compute & store it;
+            # otherwise omit 'phash' and everything still works.
+        }
+    # ----------------------------------------------------------------------
+
 
     key = new_image_key(str(job["_id"]), result["type"].lower(), "jpg")
     put_bytes(key, data)

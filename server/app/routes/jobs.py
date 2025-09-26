@@ -7,7 +7,9 @@ from app.deps import get_db
 from app.schemas import CreateJob, JobOut, PhotoOut
 from app.models import new_job
 from app.services.storage_s3 import presign_url
-from app.utils import normalize_phone # <-- 1. IMPORT THE NORMALIZER
+# New
+from app.utils import normalize_phone, build_required_types_for_sector, type_label  # add
+
 
 router = APIRouter()
 
@@ -99,3 +101,14 @@ def export_csv(job_id: str, db=Depends(get_db)):
     }
     return Response(content=data, headers=headers, media_type="text/csv")
 
+
+# --- NEW ENDPOINT ---
+@router.get("/jobs/templates/sector/{sector}")
+def job_template(sector: int):
+    types = build_required_types_for_sector(sector)
+    # Helpful for UIs: show both code and human label
+    return {
+        "requiredTypes": types,
+        "labels": {t: type_label(t) for t in types},
+        "sector": sector,
+    }

@@ -1,26 +1,5 @@
 import os
 from pymongo import MongoClient
-from dotenv import load_dotenv
-
-load_dotenv()
-
-MONGO_URI = os.getenv("MONGO_URI")
-DB_NAME = os.getenv("DB_NAME", "photoverify")
-
-# This check ensures you've set up your .env file correctly.
-if not MONGO_URI:
-    raise ValueError("MONGO_URI environment variable is not set. Please update your .env file with your MongoDB Atlas connection string.")
-
-print("[DB] Connecting to MongoDB Atlas...")
-client = MongoClient(MONGO_URI)
-db = client[DB_NAME]
-print("[DB] Connection successful.")
-
-def get_db():
-    return db
-
-import os
-from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
 from dotenv import load_dotenv
 
