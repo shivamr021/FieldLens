@@ -2,7 +2,7 @@
 from __future__ import annotations
 import re
 from typing import Dict, Optional, Tuple, Any, List
-
+from fastapi import Form
 import cv2
 import numpy as np
 
@@ -84,10 +84,10 @@ MAC_LINE_HINT = re.compile(
     re.IGNORECASE
 )
 
-# Accept colon, hyphen, or bare 12 hex  <-- add a pattern with dots; keep bare-12
+# Accept colon, hyphen, or bare 12 hex
 MAC_PATTERNS = [
-    re.compile(r"\b([0-9A-Fa-f]{2}[:\-\.]){5}[0-9A-Fa-f]{2}\b"),  # CC:54:FE:E3:26:F8 / CC-54-... / CC.54....
-    re.compile(r"\b[0-9A-Fa-f]{12}\b"),                           # CC54FEE326F8
+    re.compile(r"\b([0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}\b"),  # CC:54:FE:E3:26:F8 or CC-54-...
+    re.compile(r"\b[0-9A-Fa-f]{12}\b"),                          # CC54FEE326F8
 ]
 HEX_PAIR = re.compile(r"[0-9A-Fa-f]{2}")
 

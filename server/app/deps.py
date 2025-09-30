@@ -1,27 +1,35 @@
-# app/deps.py
 import os
+from pymongo import MongoClient
+from pymongo.errors import ConnectionFailure
 from dotenv import load_dotenv
 
 load_dotenv()
 
-USE_FAKE = os.getenv("LOCAL_FAKE_DB", "0") == "1"
+MONGO_URI = os.getenv("MONGO_URI")
 DB_NAME = os.getenv("DB_NAME", "photoverify")
 
-db = None
+if not MONGO_URI:
+    raise ValueError("MONGO_URI environment variable is not set. Please update your .env file with your MongoDB Atlas connection string.")
 
-if USE_FAKE:
-    # In-memory Mongo stub (no external service)
-    import mongomock
-    client = mongomock.MongoClient()
+print("[DB] Connecting to MongoDB Atlas...")
+
+try:
+    client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+    # The ismaster command is cheap and does not require auth.
+    client.admin.command('ismaster')
     db = client[DB_NAME]
-    print("[DB] Using mongomock (in-memory).")
-else:
-    # Real Mongo if you want later
-    from pymongo import MongoClient
-    MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
-    client = MongoClient(MONGO_URI)
-    db = client[DB_NAME]
-    print(f"[DB] Connected to Mongo at {MONGO_URI}")
+    print("[DB] Connection successful.")
+
+except ConnectionFailure:
+    print("\n" + "="*80)
+    print("[DB] ERROR: Could not connect to MongoDB Atlas.")
+    print("Please check the following:")
+    print("  1. Your MONGO_URI in the .env file is correct.")
+    print("  2. You have allowed access from ANYWHERE (0.0.0.0/0) in Atlas Network Access settings.")
+    print("  3. Your internet connection or a firewall is not blocking the connection.")
+    print("="*80 + "\n")
+    raise
 
 def get_db():
     return db
+

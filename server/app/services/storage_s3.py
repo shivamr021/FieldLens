@@ -33,8 +33,8 @@ def put_bytes(key: str, data: bytes) -> str:
 
 def presign_url(key: str, expires: int = 3600) -> str:
     if USE_LOCAL:
-        # served by app.main via StaticFiles
-        return f"/static/{key}"
+        # served by app.main via StaticFiles (mounted at /uploads)
+        return f"/uploads/{key}"
     else:
         return s3.generate_presigned_url(
             "get_object",
@@ -43,7 +43,29 @@ def presign_url(key: str, expires: int = 3600) -> str:
         )
 
 
-def new_image_key(job_id: str, kind: str, ext: str = "jpg") -> str:
+
+# def new_image_key(job_id: str, kind: str, ext: str = "jpg") -> str:
+#     ts = int(time.time() * 1000)
+#     uid = uuid.uuid4().hex[:8]
+#     return f"jobs/{job_id}/raw/{ts}-{uid}-{kind}.{ext}"
+
+def new_image_key(job_id: str, kind: str, ext: str = "jpg", sector: int | None = None) -> str:
     ts = int(time.time() * 1000)
     uid = uuid.uuid4().hex[:8]
-    return f"jobs/{job_id}/raw/{ts}-{uid}-{kind}.{ext}"
+    logical = f"sec{sector}_{kind.lower()}.{ext}" if sector else f"{kind.lower()}.{ext}"
+    return f"jobs/{job_id}/raw/{ts}-{uid}-{logical}"
+
+
+def get_bytes(key: str) -> bytes:
+    """
+    Return raw image bytes for a stored key.
+    - Local: reads from LOCAL_DIR/key
+    - S3:    downloads object
+    """
+    if USE_LOCAL:
+        path = os.path.join(LOCAL_DIR, key)
+        with open(path, "rb") as f:
+            return f.read()
+    else:
+        obj = s3.get_object(Bucket=BUCKET, Key=key)
+        return obj["Body"].read()

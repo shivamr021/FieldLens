@@ -4,16 +4,17 @@ from datetime import datetime
 # Mongo “documents” (runtime dicts) – not Pydantic models.
 
 JobStatus = Literal["PENDING", "IN_PROGRESS", "DONE"]
-PhotoType = Literal["LABEL", "AZIMUTH"]
+PhotoType = str
 PhotoStatus = Literal["PASS", "FAIL"]
 
 
-def new_job(worker_phone: str, required_types: List[PhotoType]):
+def new_job(worker_phone: str, required_types: List[PhotoType], sector: int):
     return {
         "workerPhone": worker_phone,
         "requiredTypes": required_types,
         "currentIndex": 0,
         "status": "PENDING",
+        "sector": sector,   
         "createdAt": datetime.utcnow(),
         "updatedAt": datetime.utcnow(),
     }

@@ -1,12 +1,13 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional, Literal, Dict, Any
 
-PhotoType = Literal["LABEL", "AZIMUTH"]
+PhotoType = str
 
 
 class CreateJob(BaseModel):
-    workerPhone: str = Field(..., examples=["whatsapp:+91XXXXXXXXXX", "+91XXXXXXXXXX"])
-    requiredTypes: List[PhotoType] = Field(default_factory=lambda: ["LABEL", "AZIMUTH"])
+    workerPhone: str
+    requiredTypes: List[PhotoType] = Field(default_factory=lambda: ["LABELLING", "AZIMUTH"])
+    sector: Optional[int] = None     # <-- NEW
 
 
 class JobOut(BaseModel):
@@ -15,7 +16,8 @@ class JobOut(BaseModel):
     requiredTypes: List[PhotoType]
     currentIndex: int
     status: str
-
+    # Optional but handy for admin UI
+    sector: Optional[int] = None     # <-- NEW
 
 class PhotoOut(BaseModel):
     id: str
