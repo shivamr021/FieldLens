@@ -3,14 +3,23 @@
 
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Photo Verify | Admin Dashboard</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    body { font-family: 'Inter', sans-serif; }
+    body {
+      font-family: 'Inter', sans-serif;
+    }
+
     @import url('https://rsms.me/inter/inter.css');
-    .modal { display: none; }
-    .modal.is-open { display: flex; }
+
+    .modal {
+      display: none;
+    }
+
+    .modal.is-open {
+      display: flex;
+    }
   </style>
 </head>
 
@@ -41,18 +50,24 @@
           <label for="workerPhone" class="block text-gray-400 text-sm font-bold mb-2">
             Worker's WhatsApp Number:
           </label>
-          <input
-            type="text"
-            id="workerPhone"
-            name="workerPhone"
+          <input type="text" id="workerPhone" name="workerPhone"
             class="shadow-inner appearance-none border border-gray-700 rounded-lg w-full py-2 px-3 bg-gray-900 text-white leading-tight focus:outline-none focus:ring-2 focus:ring-cyan-500"
-            placeholder="e.g., whatsapp:+919876543210"
-            required
-          />
+            placeholder="e.g., whatsapp:+919876543210" required />
           <p class="text-xs text-gray-500 mt-1">
             Must be in the format <code>whatsapp:+[country code][number]</code>.
           </p>
         </div>
+
+        <!-- after the workerPhone field -->
+        <div class="mb-4">
+          <label for="sector" class="block text-gray-400 text-sm font-bold mb-2">
+            Sector number (e.g., 1, 2, 3):
+          </label>
+          <input id="sector" name="sector" type="number" min="1" step="1"
+            class="shadow-inner appearance-none border border-gray-700 rounded-lg w-full py-2 px-3 bg-gray-900 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+            placeholder="e.g., 3" required />
+        </div>
+
 
         <div class="mb-6">
           <label class="block text-gray-400 text-sm font-bold mb-2">Required Photo Types (14):</label>
@@ -65,8 +80,7 @@
             class="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg mr-2">
             Cancel
           </button>
-          <button type="submit"
-            class="bg-cyan-500 hover:bg-cyan-600 text-white font-bold py-2 px-4 rounded-lg">
+          <button type="submit" class="bg-cyan-500 hover:bg-cyan-600 text-white font-bold py-2 px-4 rounded-lg">
             Create Job
           </button>
         </div>
@@ -101,6 +115,21 @@
         class="refresh-job-btn mt-4 w-full bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg text-sm">
         Refresh
       </button>
+
+      <button
+        class="export-csv-btn mt-2 w-full bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg text-sm">
+        Export CSV
+      </button>
+      <button
+        class="export-xlsx-btn mt-2 w-full bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg text-sm">
+        Export XLSX
+      </button>
+
+      <button
+        class="export-xlsx-img-btn mt-2 w-full bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg text-sm">
+      Export XLSX (with photos)
+    </button>
+
     </div>
   </template>
 
@@ -111,18 +140,18 @@
 
     // Authoritative 14-step sequence
     const REQUIRED_14 = [
-      "LABEL","INSTALLATION","CLUTTER","AZIMUTH","A6_GROUNDING","CPRI_GROUNDING",
-      "POWER_TERM_A6","CPRI_TERM_A6","TILT","LABELLING","ROXTEC","A6_PANEL",
-      "MCB_POWER","CPRI_TERM_SWITCH_CSS"
+      "INSTALLATION", "CLUTTER", "AZIMUTH", "A6_GROUNDING", "CPRI_GROUNDING",
+      "POWER_TERM_A6", "CPRI_TERM_A6", "TILT", "LABELLING", "ROXTEC", "A6_PANEL",
+      "MCB_POWER", "CPRI_TERM_SWITCH_CSS", "GROUNDING_OGB_TOWER"
     ];
 
     // ---- DOM refs ----
-    const jobsContainer   = document.getElementById('jobsContainer');
+    const jobsContainer = document.getElementById('jobsContainer');
     const jobCardTemplate = document.getElementById('jobCardTemplate');
-    const jobModal        = document.getElementById('jobModal');
-    const createJobBtn    = document.getElementById('createJobBtn');
-    const cancelBtn       = document.getElementById('cancelBtn');
-    const createJobForm   = document.getElementById('createJobForm');
+    const jobModal = document.getElementById('jobModal');
+    const createJobBtn = document.getElementById('createJobBtn');
+    const cancelBtn = document.getElementById('cancelBtn');
+    const createJobForm = document.getElementById('createJobForm');
     const allTypesPreview = document.getElementById('allTypesPreview');
 
     // Render the visual 14-type list in the modal (pill style)
@@ -133,10 +162,10 @@
     // ---- Helpers ----
     const getStatusClass = (status) => {
       switch (status) {
-        case 'PENDING':     return 'bg-yellow-900 text-yellow-300';
+        case 'PENDING': return 'bg-yellow-900 text-yellow-300';
         case 'IN_PROGRESS': return 'bg-blue-900 text-blue-300';
-        case 'DONE':        return 'bg-green-900 text-green-300';
-        default:            return 'bg-gray-700 text-gray-300';
+        case 'DONE': return 'bg-green-900 text-green-300';
+        default: return 'bg-gray-700 text-gray-300';
       }
     };
 
@@ -163,6 +192,22 @@
 
       card.querySelector('.refresh-job-btn')
         .addEventListener('click', () => fetchJobDetails(job.id));
+
+      card.querySelector('.export-csv-btn')
+        .addEventListener('click', () => {
+          window.open(`${API_BASE_URL}/jobs/${job.id}/export.csv`, '_blank');
+        });
+
+      card.querySelector('.export-xlsx-btn')
+        .addEventListener('click', () => {
+          window.open(`${API_BASE_URL}/jobs/${job.id}/export.xlsx`, '_blank');
+        });
+
+      card.querySelector('.export-xlsx-img-btn')
+        .addEventListener('click', () => {
+          window.open(`${API_BASE_URL}/jobs/${job.id}/export_with_images.xlsx`, '_blank');
+        });
+
 
       return card;
     };
@@ -262,10 +307,12 @@
       e.preventDefault();
       const formData = new FormData(e.target);
       const workerPhone = formData.get('workerPhone');
+      const sector = parseInt(formData.get('sector'), 10); // <-- new
 
       const payload = {
         workerPhone,
-        requiredTypes: REQUIRED_14
+        requiredTypes: REQUIRED_14,
+        sector, // <-- include
       };
 
       try {
@@ -288,4 +335,5 @@
     fetchAllJobs();
   </script>
 </body>
+
 </html>

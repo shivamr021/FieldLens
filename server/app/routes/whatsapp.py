@@ -2,6 +2,7 @@ import os
 import httpx
 from fastapi import APIRouter, Depends, Request, Response
 from twilio.twiml.messaging_response import MessagingResponse
+from app.services.exporter import write_job_csv
 
 from app.deps import get_db
 from app.services.validate import run_pipeline
@@ -76,13 +77,13 @@ async def whatsapp_webhook(request: Request, db=Depends(get_db)):
     expected = _current_expected_type(job)
 
     if media_count == 0:
-        prompt, example_url = _prompt_for(expected or "LABEL")
+        prompt, example_url = _prompt_for(expected or "LABELLING")
         return build_twiml_reply(f"{prompt}\nSend 1 image at a time.", media_urls=[example_url])
 
     media_url = form.get("MediaUrl0")
     content_type = form.get("MediaContentType0", "image/jpeg")
     if not media_url or not content_type.startswith("image/"):
-        prompt, _ = _prompt_for(expected or "LABEL")
+        prompt, _ = _prompt_for(expected or "LABELLING")
         return build_twiml_reply(f"Please send a valid image. {prompt}")
 
     data = await _fetch_media(media_url)
@@ -106,8 +107,10 @@ async def whatsapp_webhook(request: Request, db=Depends(get_db)):
         }
     # ----------------------------------------------------------------------
 
+    sector = job.get("sector")
+    key = new_image_key(str(job["_id"]), result["type"].lower(), "jpg", sector=sector)
 
-    key = new_image_key(str(job["_id"]), result["type"].lower(), "jpg")
+    # key = new_image_key(str(job["_id"]), result["type"].lower(), "jpg")
     put_bytes(key, data)
 
     photo_doc = {
@@ -131,7 +134,14 @@ async def whatsapp_webhook(request: Request, db=Depends(get_db)):
         next_expected = _current_expected_type(job)
         if next_expected is None:
             db.jobs.update_one({"_id": job["_id"]}, {"$set": {"status": "DONE"}})
-            return build_twiml_reply("✅ Received and verified. All photos complete. Thank you!")
+
+            # auto-export a CSV for convenience
+            photos = list(db.photos.find({"jobId": str(job["_id"])}))
+            csv_url = write_job_csv(job, photos)
+            # Careful with Twilio limits: send a short text-only message
+            return build_twiml_reply(f"✅ Received and verified. All photos complete.\nExport: {csv_url}")
+            # return build_twiml_reply("✅ Received and verified. All photos complete. Thank you!")
+
         prompt, example = _prompt_for(next_expected)
         return build_twiml_reply(f"✅ {result['type']} verified.\nNext: {prompt}", media_urls=[example])
 

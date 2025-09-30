@@ -7,6 +7,7 @@ PhotoType = str
 class CreateJob(BaseModel):
     workerPhone: str
     requiredTypes: List[PhotoType] = Field(default_factory=lambda: ["LABEL", "AZIMUTH"])
+    sector: Optional[int] = None     # <-- NEW
 
 
 class JobOut(BaseModel):
@@ -15,7 +16,8 @@ class JobOut(BaseModel):
     requiredTypes: List[PhotoType]
     currentIndex: int
     status: str
-
+    # Optional but handy for admin UI
+    sector: Optional[int] = None     # <-- NEW
 
 class PhotoOut(BaseModel):
     id: str

@@ -15,9 +15,6 @@ APP_BASE_URL = os.getenv("APP_BASE_URL")
 if not APP_BASE_URL:
     raise ValueError("APP_BASE_URL not set in .env")
 
-EXAMPLE_URL_LABEL = os.getenv("PUBLIC_EXAMPLE_URL_LABEL") or f"{APP_BASE_URL}/static/examples/labelling.jpeg"
-EXAMPLE_URL_AZIMUTH = os.getenv("PUBLIC_EXAMPLE_URL_AZIMUTH") or f"{APP_BASE_URL}/static/examples/azimuth.jpeg"
-
 # --- Photo Type Catalog (configurable) ---
 # Canonical codes drive logic; labels + examples drive UX.
 # Put example images in: app/static/examples/<code>.jpeg  (override with env if you want)
@@ -30,22 +27,6 @@ def _sanitize_example_url(u: str | None) -> str:
     return u
 
 TYPE_REGISTRY = {
-    "LABEL": {
-        "label": "Label Photo",
-        "prompt": "Please send the *Label Photo* (flat, sharp, no glare).",
-        "example_env": "PUBLIC_EXAMPLE_URL_LABEL",
-        "example_default": f"{APP_BASE_URL}/static/examples/labelling.jpeg",
-        "validated": False,
-    },
-    "AZIMUTH": {
-        "label": "Azimuth Photo",
-        "prompt": "Please send the *Azimuth Photo* with a clear compass reading.",
-        "example_env": "PUBLIC_EXAMPLE_URL_AZIMUTH",
-        # FIX: put it under /static/examples/ like the rest
-        "example_default": f"{APP_BASE_URL}/static/examples/azimuth.jpeg",
-        "validated": False,
-    },
-    # the remaining 12 (non-breaking: stored & sequenced; simple checks can be added later)
     "INSTALLATION": {
         "label": "Installation",
         "prompt": "Send the *Installation* photo (full view, well lit).",
@@ -58,6 +39,13 @@ TYPE_REGISTRY = {
         "prompt": "Send the *Clutter* photo (surroundings, wide frame).",
         "example_env": "PUBLIC_EXAMPLE_URL_CLUTTER",
         "example_default": f"{APP_BASE_URL}/static/examples/clutter.jpeg",
+        "validated": False,
+    },
+    "AZIMUTH": {
+        "label": "Azimuth Photo",
+        "prompt": "Please send the *Azimuth Photo* with a clear compass reading.",
+        "example_env": "PUBLIC_EXAMPLE_URL_AZIMUTH",
+        "example_default": f"{APP_BASE_URL}/static/examples/azimuth.jpeg",
         "validated": False,
     },
     "A6_GROUNDING": {
