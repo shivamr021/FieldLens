@@ -1,22 +1,40 @@
+# app/services/imaging.py (Final Production Version)
+
 import cv2
 import numpy as np
-from typing import Tuple
+from PIL import Image, UnidentifiedImageError
+import io
 
+def load_bgr(data: bytes) -> np.ndarray | None:
+    """
+    Robustly decodes image bytes into a BGR numpy array for OpenCV.
+    It uses the lenient Pillow library and ensures data types and memory
+    layout are correct for OpenCV compatibility.
+    """
+    try:
+        image_pil = Image.open(io.BytesIO(data))
+        image_pil = image_pil.convert('RGB')
+        
+        image_rgb = np.array(image_pil, dtype=np.uint8)
+        
+        # Ensure the memory layout is C-contiguous for OpenCV
+        image_rgb_contiguous = np.ascontiguousarray(image_rgb)
+        
+        # Convert RGB to BGR for OpenCV
+        image_bgr = cv2.cvtColor(image_rgb_contiguous, cv2.COLOR_RGB2BGR)
+        
+        return image_bgr
+        
+    except Exception:
+        return None
 
-def load_bgr(data: bytes):
-    arr = np.frombuffer(data, dtype=np.uint8)
-    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-    return img
-
-
+# --- Other Image Analysis Functions ---
 def to_gray(img):
     return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
 
 def variance_of_laplacian(img):
     gray = to_gray(img)
     return float(cv2.Laplacian(gray, cv2.CV_64F).var())
-
 
 def largest_quadrilateral_skew_deg(img) -> float | None:
     gray = to_gray(img)
@@ -35,21 +53,22 @@ def largest_quadrilateral_skew_deg(img) -> float | None:
                 quad = approx
     if quad is None:
         return None
-    pts = quad.reshape(-1,2).astype(np.float32)
+    pts = quad.reshape(-1, 2).astype(np.float32)
 
-    # Compute angles of edges vs horizontal, take average deviation
     def angle(p, q):
         v = q - p
         ang = np.degrees(np.arctan2(v[1], v[0]))
-        return abs(((ang + 90) % 90) - 45)  # rough rect skew-ness
+        return abs(((ang + 90) % 90) - 45)
 
-    a = angle(pts[0], pts[1]); b = angle(pts[1], pts[2]); c = angle(pts[2], pts[3]); d = angle(pts[3], pts[0])
+    a = angle(pts[0], pts[1]); b = angle(pts[1], pts[2])
+    c = angle(pts[2], pts[3]); d = angle(pts[3], pts[0])
     return float(np.mean([a, b, c, d]))
-
 
 def has_big_circle(img) -> bool:
     g = to_gray(img)
     g = cv2.medianBlur(g, 5)
-    circles = cv2.HoughCircles(g, cv2.HOUGH_GRADIENT, dp=1.2, minDist=80,
-                               param1=80, param2=40, minRadius=40, maxRadius=0)
+    circles = cv2.HoughCircles(
+        g, cv2.HOUGH_GRADIENT, dp=1.2, minDist=80,
+        param1=80, param2=40, minRadius=40, maxRadius=0
+    )
     return circles is not None
