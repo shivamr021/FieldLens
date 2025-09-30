@@ -2,7 +2,6 @@ import os
 import httpx
 from fastapi import APIRouter, Depends, Request, Response
 from twilio.twiml.messaging_response import MessagingResponse
-from app.services.exporter import write_job_csv
 
 from app.deps import get_db
 from app.services.validate import run_pipeline
@@ -132,15 +131,10 @@ async def whatsapp_webhook(request: Request, db=Depends(get_db)):
             job = db.jobs.find_one({"_id": job["_id"]})
 
         next_expected = _current_expected_type(job)
+
         if next_expected is None:
             db.jobs.update_one({"_id": job["_id"]}, {"$set": {"status": "DONE"}})
-
-            # auto-export a CSV for convenience
-            photos = list(db.photos.find({"jobId": str(job["_id"])}))
-            csv_url = write_job_csv(job, photos)
-            # Careful with Twilio limits: send a short text-only message
-            return build_twiml_reply(f"✅ Received and verified. All photos complete.\nExport: {csv_url}")
-            # return build_twiml_reply("✅ Received and verified. All photos complete. Thank you!")
+            return build_twiml_reply("✅ Received and verified. All photos complete. Thank you!")
 
         prompt, example = _prompt_for(next_expected)
         return build_twiml_reply(f"✅ {result['type']} verified.\nNext: {prompt}", media_urls=[example])
