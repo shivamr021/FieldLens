@@ -10,10 +10,19 @@ os.makedirs(LOCAL_STORAGE_DIR, exist_ok=True)
 
 app = FastAPI(title="Photo Verify API", version="1.0")
 
+DEV_ORIGINS = [
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=DEV_ORIGINS,   # <-- no "*"
+    allow_credentials=True,      # you’re using withCredentials on the client
     allow_methods=["*"],
     allow_headers=["*"],
 )
