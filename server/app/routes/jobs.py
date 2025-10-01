@@ -10,7 +10,7 @@ from app.services.storage_s3 import presign_url
 # New
 from app.utils import normalize_phone, build_required_types_for_sector, type_label  # add
 
-
+router = APIRouter()
 
 def oid(obj):
     return str(obj["_id"]) if isinstance(obj.get("_id"), ObjectId) else obj.get("_id")
