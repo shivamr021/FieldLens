@@ -6,17 +6,69 @@ import csv, io
 from app.deps import get_db
 from app.schemas import CreateJob, JobOut, PhotoOut
 from app.models import new_job
-from app.services.storage_s3 import presign_url, get_bytes
+from app.services.storage_s3 import presign_url
 # New
 from app.utils import normalize_phone, build_required_types_for_sector, type_label  # add
-from openpyxl import Workbook
-from openpyxl.drawing.image import Image as XLImage
-from openpyxl.utils import get_column_letter
-from PIL import Image as PILImage
-from io import BytesIO
-
-
 router = APIRouter()
+# --- add near the top with your other imports ---
+import os, tempfile
+from typing import Literal, Dict, Any
+from fastapi import UploadFile, File, Form
+from app.services.validate import run_pipeline
+from app.services.imaging import load_bgr  # <-- IMPORTANT: bytes -> BGR np.ndarray
+
+# --- add this route after `router = APIRouter()` ---
+@router.post("/ocr/test", tags=["debug"])
+async def ocr_test(
+    type: Literal["label", "angle"] = Form("label"),
+    file: UploadFile = File(...),
+) -> Dict[str, Any]:
+    """
+    Test OCR/validation from Swagger using the same run_pipeline(img, job_ctx, existing_phashes)
+    path that /api/whatsapp/webhook uses. No DB/S3 writes.
+    """
+    # read file bytes
+    data = await file.read()
+
+    # decode to BGR image (numpy array)
+    try:
+        img = load_bgr(data)
+        if img is None:
+            return {"status": "FAIL", "reason": ["Could not decode image (None)"]}
+    except Exception as e:
+        return {"status": "FAIL", "reason": [f"Image decode error: {e}"]}
+
+    # Map form type -> expectedType used by the pipeline
+    expected = "LABEL" if type == "label" else "AZIMUTH"
+
+    # Call your team’s pipeline with the correct signature
+    result = run_pipeline(
+        img,
+        job_ctx={"expectedType": expected},   # thresholds can be added here if you want
+        existing_phashes=[],                  # none for a standalone test
+    )
+
+    # Normalize a friendly response for Swagger (don’t change your pipeline)
+    fields = result.get("fields") or {
+        "macId": result.get("mac_id"),
+        "rsn": result.get("rsn_id") or result.get("rsn"),
+        "azimuthDeg": result.get("angleDeg"),
+        "azimuthDir": result.get("angleDir"),
+    }
+    checks = result.get("checks") or {"blurScore": result.get("blurScore")}
+
+    return {
+        "type": result.get("type", expected),
+        "status": result.get("status", "FAIL"),
+        "reason": result.get("reason", []),
+        "fields": fields,
+        "checks": checks,
+        "ocrText": result.get("ocrText"),
+    }
+
+
+
+
 
 def oid(obj):
     return str(obj["_id"]) if isinstance(obj.get("_id"), ObjectId) else obj.get("_id")
@@ -39,7 +91,7 @@ def list_jobs(db=Depends(get_db)):
 def create_job(payload: CreateJob, db=Depends(get_db)):
     # --- 2. NORMALIZE THE PHONE NUMBER BEFORE SAVING ---
     normalized_phone = normalize_phone(payload.workerPhone)
-    j = new_job(normalized_phone, payload.requiredTypes, payload.sector) # pass sector
+    j = new_job(normalized_phone, payload.requiredTypes)
     # --- END OF CHANGE ---
     
     res = db.jobs.insert_one(j)
@@ -50,7 +102,6 @@ def create_job(payload: CreateJob, db=Depends(get_db)):
         "requiredTypes": j["requiredTypes"],
         "currentIndex": j["currentIndex"],
         "status": j["status"],
-        "sector": j.get("sector"),   # include sector in response
     }
 
 @router.get("/jobs/{job_id}")
@@ -91,170 +142,21 @@ def export_csv(job_id: str, db=Depends(get_db)):
     photos = list(db.photos.find({"jobId": job_id}))
     out = io.StringIO()
     writer = csv.writer(out)
-
-    writer.writerow([
-        "jobId","workerPhone","photoId","type","s3Key","logicalName",  # <-- add
-        "macId","rsn","azimuthDeg","blurScore","isDuplicate","skewDeg","status","reason"
-    ])
-
+    writer.writerow(["jobId","workerPhone","photoId","type","s3Key","macId","rsn","azimuthDeg","blurScore","isDuplicate","skewDeg","status","reason"])
     for p in photos:
         f = p.get("fields", {})
         c = p.get("checks", {})
-        logical = f"sec{job.get('sector')}_{p['type'].lower()}.jpg" if job.get('sector') else f"{p['type'].lower()}.jpg"
         writer.writerow([
-            job_id, job["workerPhone"], oid(p), p["type"], p["s3Key"], logical,
+            job_id, job["workerPhone"], oid(p), p["type"], p["s3Key"],
             f.get("macId"), f.get("rsn"), f.get("azimuthDeg"),
             c.get("blurScore"), c.get("isDuplicate"), c.get("skewDeg"),
             p.get("status"), "|".join(p.get("reason", []))
         ])
-
-
     data = out.getvalue().encode("utf-8")
     headers = {
         "Content-Disposition": f'attachment; filename="job_{job_id}.csv"'
     }
     return Response(content=data, headers=headers, media_type="text/csv")
-
-
-# NEW: /jobs/{job_id}/export.xlsx
-@router.get("/jobs/{job_id}/export.xlsx")
-def export_xlsx(job_id: str, db=Depends(get_db)):
-    try:
-        job = db.jobs.find_one({"_id": ObjectId(job_id)})
-    except Exception:
-        raise HTTPException(404, "Invalid Job ID format")
-    if not job:
-        raise HTTPException(404, "Job not found")
-
-    photos = list(db.photos.find({"jobId": job_id}))
-    rows = []
-    for p in photos:
-        f = p.get("fields", {})
-        c = p.get("checks", {})
-        sector = job.get("sector")
-        base = p["type"].lower()
-        logical = f"sec{sector}_{base}.jpg" if sector else f"{base}.jpg"
-        rows.append({
-            "jobId": job_id,
-            "workerPhone": job["workerPhone"],
-            "photoId": str(p.get("_id")),
-            "type": p["type"],
-            "s3Key": p["s3Key"],
-            "logicalName": logical,
-            "macId": f.get("macId"),
-            "rsn": f.get("rsn"),
-            "azimuthDeg": f.get("azimuthDeg"),
-            "blurScore": c.get("blurScore"),
-            "isDuplicate": c.get("isDuplicate"),
-            "skewDeg": c.get("skewDeg"),
-            "status": p.get("status"),
-            "reason": "|".join(p.get("reason", [])),
-        })
-
-    # build xlsx in-memory (no disk writes)
-    import pandas as pd, io
-    buf = io.BytesIO()
-    pd.DataFrame(rows).to_excel(buf, index=False)
-    data = buf.getvalue()
-    headers = {"Content-Disposition": f'attachment; filename="job_{job_id}.xlsx"'}
-    return Response(content=data, headers=headers, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-
-@router.get("/jobs/{job_id}/export_with_images.xlsx")
-def export_with_images(job_id: str, db=Depends(get_db)):
-    # --- Fetch job ---
-    try:
-        job = db.jobs.find_one({"_id": ObjectId(job_id)})
-    except Exception:
-        raise HTTPException(404, "Invalid Job ID format")
-    if not job:
-        raise HTTPException(404, "Job not found")
-
-    # --- Fetch photos for job ---
-    photos = list(db.photos.find({"jobId": job_id}))
-    sector = job.get("sector")
-
-    # --- Build workbook ---
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Photos"
-
-    # Header
-    headers = [
-        "jobId","workerPhone","photoId","type","s3Key","logicalName",
-        "macId","rsn","azimuthDeg","blurScore","isDuplicate","skewDeg",
-        "status","reason","photo"  # last col = embedded image
-    ]
-    ws.append(headers)
-
-    # Set column widths (optional, tweak to taste)
-    widths = {
-        "A": 25, "B": 20, "C": 30, "D": 18, "E": 45, "F": 28,
-        "G": 16, "H": 16, "I": 12, "J": 12, "K": 12, "L": 12,
-        "M": 12, "N": 30, "O": 18
-    }
-    for col, w in widths.items():
-        ws.column_dimensions[col].width = w
-
-    row_index = 2  # data starts at row 2
-    thumb_max_w, thumb_max_h = 160, 160  # px, adjust as needed
-
-    for p in photos:
-        f = p.get("fields", {})
-        c = p.get("checks", {})
-        base = p["type"].lower()
-        logical = f"sec{sector}_{base}.jpg" if sector else f"{base}.jpg"
-
-        reason = "|".join(p.get("reason", []))
-
-        row = [
-            job_id,
-            job["workerPhone"],
-            oid(p),
-            p["type"],
-            p["s3Key"],
-            logical,
-            f.get("macId"),
-            f.get("rsn"),
-            f.get("azimuthDeg"),
-            c.get("blurScore"),
-            c.get("isDuplicate"),
-            c.get("skewDeg"),
-            p.get("status"),
-            reason,
-            ""  # placeholder for image column
-        ]
-        ws.append(row)
-
-        # Try embedding image
-        try:
-            raw = get_bytes(p["s3Key"])
-            pil = PILImage.open(BytesIO(raw)).convert("RGB")
-            pil.thumbnail((thumb_max_w, thumb_max_h))  # keeps aspect ratio
-
-            buf = BytesIO()
-            pil.save(buf, format="JPEG", quality=85)
-            buf.seek(0)
-
-            xl_img = XLImage(buf)
-            img_cell = f"O{row_index}"  # column O = "photo"
-            ws.add_image(xl_img, img_cell)
-
-            # Make the row taller to fit the thumbnail (rough px-to-points mapping)
-            ws.row_dimensions[row_index].height = 130  # tweak if needed
-        except Exception as e:
-            # If embed fails, just leave the cell blank; data columns still export
-            pass
-
-        row_index += 1
-
-    # Stream workbook
-    out = BytesIO()
-    wb.save(out)
-    data = out.getvalue()
-    headers = {"Content-Disposition": f'attachment; filename="job_{job_id}_with_images.xlsx"'}
-    return Response(content=data, headers=headers,
-                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 # --- NEW ENDPOINT ---

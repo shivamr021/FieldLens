@@ -1,31 +1,52 @@
+# app/utils.py
+from __future__ import annotations
 import os
 import re
-from dotenv import load_dotenv
-from twilio.rest import Client
 
-load_dotenv()
+# ---------------------------------------------------------------------
+# Robust .env loading (works from repo root OR /server working dir)
+# ---------------------------------------------------------------------
+try:
+    from dotenv import load_dotenv, find_dotenv
+    load_dotenv(find_dotenv(usecwd=True))
+except Exception:
+    pass  # ok if python-dotenv isn't installed
 
-# --- Environment Variables ---
-TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
-TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
-TWILIO_WHATSAPP_FROM = os.getenv("TWILIO_WHATSAPP_FROM")
+# ---------------------------------------------------------------------
+# Twilio REST client (optional; won't crash if missing)
+# ---------------------------------------------------------------------
+try:
+    from twilio.rest import Client as _TwilioClient  # type: ignore
+except Exception:
+    _TwilioClient = None  # dev environments without twilio are fine
 
+TWILIO_ACCOUNT_SID   = os.getenv("TWILIO_ACCOUNT_SID", "")
+TWILIO_AUTH_TOKEN    = os.getenv("TWILIO_AUTH_TOKEN", "")
+TWILIO_WHATSAPP_FROM = os.getenv("TWILIO_WHATSAPP_FROM", "")
 
-APP_BASE_URL = os.getenv("APP_BASE_URL")
-if not APP_BASE_URL:
-    raise ValueError("APP_BASE_URL not set in .env")
+twilio_client = None
+if _TwilioClient and TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN:
+    try:
+        twilio_client = _TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+    except Exception:
+        twilio_client = None
 
-# --- Photo Type Catalog (configurable) ---
-# Canonical codes drive logic; labels + examples drive UX.
-# Put example images in: app/static/examples/<code>.jpeg  (override with env if you want)
+# ---------------------------------------------------------------------
+# Public/base URLs — safe defaults (no hard raise)
+# ---------------------------------------------------------------------
+APP_BASE_URL = os.getenv("APP_BASE_URL") or "http://localhost:8000"
+EXAMPLE_URL_LABEL   = os.getenv("PUBLIC_EXAMPLE_URL_LABEL")   or f"{APP_BASE_URL}/static/examples/labelling.jpeg"
+EXAMPLE_URL_AZIMUTH = os.getenv("PUBLIC_EXAMPLE_URL_AZIMUTH") or f"{APP_BASE_URL}/static/examples/azimuth.jpeg"
+
 def _sanitize_example_url(u: str | None) -> str:
-    """Fix common typos or misconfigs in example URLs."""
     if not u:
         return ""
-    # Correct the common '.jped' mistake and normalize basic spacing
-    u = u.replace(".jped", ".jpeg")
-    return u
+    return u.replace(".jped", ".jpeg").strip()
 
+# ---------------------------------------------------------------------
+# Type registry (your 14-step flow + prompts & examples)
+# validated=False here is OK; validation decision is done by is_validated_type()
+# ---------------------------------------------------------------------
 TYPE_REGISTRY = {
     "INSTALLATION": {
         "label": "Installation",
@@ -127,26 +148,65 @@ TYPE_REGISTRY = {
     },
 }
 
-def type_label(ptype: str) -> str:
-    return TYPE_REGISTRY.get(ptype, {}).get("label", ptype.replace("_", " ").title())
+# ---------------------------------------------------------------------
+# Canonical type helpers used across app (LABEL / AZIMUTH, etc.)
+# ---------------------------------------------------------------------
+_TYPE_ALIASES = {
+    "label": "LABEL",
+    "labelling": "LABEL",
+    "labeling": "LABEL",
+    "angle": "AZIMUTH",
+    "azimuth": "AZIMUTH",
+    "azi": "AZIMUTH",
+}
 
-def type_example_url(ptype: str) -> str:
-    meta = TYPE_REGISTRY.get(ptype, {})
-    env_key = meta.get("example_env")
-    # Prefer ENV if set; otherwise default pattern
-    raw = (os.getenv(env_key) if env_key else None) or meta.get(
-        "example_default",
-        f"{APP_BASE_URL}/static/examples/{ptype.lower()}.jpeg",
-    )
-    return _sanitize_example_url(raw)
+def canonical_type(ptype: str | None) -> str:
+    if not ptype:
+        return "PHOTO"
+    k = str(ptype).strip().upper()
+    return _TYPE_ALIASES.get(k.lower(), k)
 
-def type_prompt(ptype: str) -> str:
-    return TYPE_REGISTRY.get(ptype, {}).get("prompt", f"Please send the *{type_label(ptype)}* photo.")
+def type_label(ptype: str | None) -> str:
+    c = canonical_type(ptype)
+    # Prefer registry label if we have it
+    if c in TYPE_REGISTRY and TYPE_REGISTRY[c].get("label"):
+        return TYPE_REGISTRY[c]["label"]
+    if c == "LABEL":
+        return "Label Photo"
+    if c == "AZIMUTH":
+        return "Azimuth Photo"
+    return (c or "Photo").replace("_", " ").title()
 
-def is_validated_type(ptype: str) -> bool:
-    return TYPE_REGISTRY.get(ptype, {}).get("validated", False)
+def is_validated_type(ptype: str | None) -> bool:
+    """
+    Which types should go through OCR/validation. Registry 'validated' is ignored here;
+    we explicitly validate only LABEL and AZIMUTH (per your pipeline).
+    """
+    return canonical_type(ptype) in {"LABEL", "AZIMUTH"}
 
-# 14-step default template (sector-aware naming is visual; canonical codes keep logic stable)
+def type_example_url(ptype: str | None) -> str:
+    c = canonical_type(ptype)
+    # First prefer registry env key if provided
+    if c in TYPE_REGISTRY:
+        env_key = TYPE_REGISTRY[c].get("example_env")
+        if env_key and os.getenv(env_key):
+            return _sanitize_example_url(os.getenv(env_key))
+        if TYPE_REGISTRY[c].get("example_default"):
+            return _sanitize_example_url(TYPE_REGISTRY[c]["example_default"])
+    # Fallback to canonical examples
+    return EXAMPLE_URL_AZIMUTH if c == "AZIMUTH" else EXAMPLE_URL_LABEL
+
+def type_prompt(ptype: str | None) -> str:
+    c = canonical_type(ptype)
+    if c in TYPE_REGISTRY and TYPE_REGISTRY[c].get("prompt"):
+        return TYPE_REGISTRY[c]["prompt"]
+    if c == "AZIMUTH":
+        return "Please send the **Azimuth Photo** showing a clear compass reading (e.g., 123° NE)."
+    return "Please send the **Label Photo** with MAC & RSN clearly visible (flat, sharp, no glare)."
+
+# ---------------------------------------------------------------------
+# Sector → required types
+# ---------------------------------------------------------------------
 DEFAULT_14_TYPES = [
     "INSTALLATION",
     "CLUTTER",
@@ -164,50 +224,74 @@ DEFAULT_14_TYPES = [
     "GROUNDING_OGB_TOWER",
 ]
 
-def build_required_types_for_sector(sector: int) -> list[str]:
-    # Admin sees "Sec{sector}_<Label>" in UI exports, but we keep canonical codes in DB.
-    return DEFAULT_14_TYPES
+def build_required_types_for_sector(sector: str | None) -> list[str]:
+    """
+    Return the ordered list of required types. Keep defaults safe.
+    - For most flows, we only require LABEL + AZIMUTH (validated).
+    - If you want the full 14-step template for a given sector code, extend below.
+    """
+    if not sector:
+        return ["LABEL", "AZIMUTH"]
 
+    s = str(sector).strip().upper()
+    mapping = {
+        # Typical wireless job
+        "FWA": ["LABEL", "AZIMUTH"],
+        "WIRELESS": ["LABEL", "AZIMUTH"],
 
-# --- Twilio Client (used for outbound/push messages) ---
-twilio_client = None
-if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN:
-    twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+        # Fiber examples
+        "FTTH": ["LABEL"],
+        "FIBER": ["LABEL"],
 
+        # If you explicitly want the 14-step set
+        "FULL_14": DEFAULT_14_TYPES,
+        "DEFAULT_14": DEFAULT_14_TYPES,
+    }
+    return mapping.get(s, ["LABEL", "AZIMUTH"])
 
-# --- Helper Functions ---
+# ---------------------------------------------------------------------
+# Phone formatting + WhatsApp sender
+# ---------------------------------------------------------------------
 def normalize_phone(p: str) -> str:
-    """Normalize incoming Twilio phone params to canonical 'whatsapp:+<E.164>'."""
+    """
+    Normalize incoming phone; keep + if user sent it; strip other non-digits.
+    (We do NOT add 'whatsapp:' here—sending helpers will.)
+    """
     if not p:
         return ""
-    digits = re.sub(r'\D', '', p)
-    return f"whatsapp:+{digits}" if digits else ""
-
+    p = p.strip()
+    if p.startswith("+"):
+        return "+" + re.sub(r"\D", "", p)[1:]
+    return re.sub(r"\D", "", p)
 
 def send_whatsapp_image(to_number: str, image_url: str, text: str = ""):
-    """Sends an image to WhatsApp using Twilio REST API."""
-    if not all([twilio_client, TWILIO_WHATSAPP_FROM]):
-        print("[ERROR] Twilio REST client not configured in .env.")
+    """
+    Sends an image via Twilio REST API, if configured.
+    Safe no-op if twilio isn’t present or env is missing.
+    """
+    if not all([twilio_client, TWILIO_WHATSAPP_FROM, to_number, image_url]):
+        print("[INFO] Twilio REST not fully configured; skipping send.")
         return None
 
-    if to_number and not to_number.startswith("whatsapp:"):
+    if not to_number.startswith("whatsapp:"):
         to_number = f"whatsapp:{to_number}"
 
     try:
-        message = twilio_client.messages.create(
+        msg = twilio_client.messages.create(
             from_=TWILIO_WHATSAPP_FROM,
             to=to_number,
-            body=text,
-            media_url=[image_url]
+            body=text or None,
+            media_url=[image_url],
         )
-        print(f"[INFO] Sent example image to {to_number}, SID={message.sid}")
-        return message.sid
+        print(f"[INFO] Sent example image to {to_number}, SID={msg.sid}")
+        return msg.sid
     except Exception as e:
-        print(f"[ERROR] Failed to send WhatsApp image via REST API: {e}")
+        print(f"[ERROR] Twilio send failed: {e}")
         return None
 
-
-# --- Regex ---
+# ---------------------------------------------------------------------
+# (Legacy) regex used elsewhere in the app (safe to keep)
+# ---------------------------------------------------------------------
 DEGREE_RE = re.compile(r"(?<!\d)([0-3]?\d{1,2})(?:\s*(?:°|deg|degrees)?)\b", re.IGNORECASE)
-MAC_RE = re.compile(r"\b([0-9A-F]{12})\b", re.IGNORECASE)
-RSN_RE = re.compile(r"\b(RSN|SR|SN)[:\s\-]*([A-Z0-9\-]{4,})\b", re.IGNORECASE)
+MAC_RE    = re.compile(r"\b([0-9A-F]{12})\b", re.IGNORECASE)
+RSN_RE    = re.compile(r"\b(RSN|SR|SN)[:\s\-]*([A-Z0-9\-]{4,})\b", re.IGNORECASE)
