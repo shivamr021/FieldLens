@@ -160,7 +160,7 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
           <TabsContent value="excel" className="mt-4">
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <h3 className="font-medium">Task Report Data</h3>
+                <h3 className="font-medium">Job Report Data</h3>
                 <Button
                   size="sm"
                   variant="outline"
@@ -172,7 +172,7 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
                 </Button>
               </div>
 
-              <div className="border rounded-lg overflow-hidden">
+              <div className="border rounded-lg">
                 <table className="w-full">
                   <thead className="bg-muted">
                     <tr>

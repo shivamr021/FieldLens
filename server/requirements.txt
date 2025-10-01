@@ -25,3 +25,7 @@ python-multipart==0.0.9
 
 # Twilio official lib
 twilio==8.11.0
+
+#Authetication
+python-jose==3.3.0
+passlib[bcrypt]==1.7.4

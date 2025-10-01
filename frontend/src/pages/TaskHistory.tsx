@@ -1,79 +1,108 @@
-import { useState } from "react";
+import { useState,useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Search, Filter, Download } from "lucide-react";
+import { ArrowLeft, Search, Filter } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { fetchJobs, type BackendJob } from "@/lib/api";
 
-// Mock historical data
-const mockHistory = [
-  {
-    id: "TSK_045",
-    title: "Market Research Survey",
-    phoneNumber: "+1555123456",
-    status: 'completed' as const,
-    createdAt: "2024-01-10",
-    completedAt: "2024-01-11",
-    assignedTo: "Alice Johnson",
-    duration: "1h 23m",
-    filesGenerated: 42,
-  },
-  {
-    id: "TSK_044",
-    title: "Customer Satisfaction Call",
-    phoneNumber: "+1555987654",
-    status: 'failed' as const,
-    createdAt: "2024-01-09",
-    completedAt: "2024-01-09",
-    assignedTo: "Bob Smith",
-    duration: "0h 15m",
-    filesGenerated: 0,
-    error: "Connection timeout",
-  },
-  {
-    id: "TSK_043",
-    title: "Product Demo Follow-up",
-    phoneNumber: "+1555456789",
-    status: 'completed' as const,
-    createdAt: "2024-01-08",
-    completedAt: "2024-01-08",
-    assignedTo: "Carol Davis",
-    duration: "0h 45m",
-    filesGenerated: 28,
-  },
-];
+type TaskStatus = "PENDING" | "IN_PROGRESS" | "DONE" | "FAILED";
+type StatusFilter = "all" | "completed" | "failed" | "pending" | "processing";
 
-const statusColors = {
-  completed: 'bg-success text-success-foreground',
-  failed: 'bg-destructive text-destructive-foreground',
-  pending: 'bg-warning text-warning-foreground',
-  processing: 'bg-info text-info-foreground',
+const statusFilterMap: Record<Exclude<StatusFilter, "all">, TaskStatus> = {
+  completed: "DONE",
+  failed: "FAILED",
+  pending: "PENDING",
+  processing: "IN_PROGRESS",
 };
+const statusClasses: Record<TaskStatus, string> = {
+  PENDING: "bg-warning text-warning-foreground",
+  IN_PROGRESS: "bg-info text-info-foreground",
+  DONE: "bg-success text-success-foreground",
+  FAILED: "bg-destructive text-destructive-foreground",
+};
+function prettyStatus(s: TaskStatus) {
+  switch (s) {
+    case "PENDING": return "Pending";
+    case "IN_PROGRESS": return "In Progress";
+    case "DONE": return "Completed";
+    case "FAILED": return "Failed";
+  }
+}
 
 export default function TaskHistory() {
-  const navigate = useNavigate();
+  const [jobs, setJobs] = useState<BackendJob[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const navigate = useNavigate();
 
-  const filteredHistory = mockHistory.filter(task => {
-    const matchesSearch = task.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         task.phoneNumber.includes(searchQuery) ||
-                         task.id.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesStatus = statusFilter === "all" || task.status === statusFilter;
-    return matchesSearch && matchesStatus;
-  });
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      setErr(null);
+      try {
+        const data = await fetchJobs();
+        setJobs(data);
+      } catch (e: any) {
+        setErr(e?.message ?? "Failed to load jobs");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  const uiTasks = useMemo(() => {
+    const toIsoCreated = (j: BackendJob) => {
+      if (j.createdAt) return j.createdAt;
+      try {
+        const secs = parseInt(j.id.slice(0, 8), 16);
+        return new Date(secs * 1000).toISOString();
+      } catch {
+        return new Date().toISOString();
+      }
+    };
+    const toUpper = (s: string) => (s ? s.toUpperCase() : s);
+
+    return jobs.map((j) => ({
+      id: j.id,
+      title: `Job • ${j.workerPhone}`,
+      phoneNumber: j.workerPhone,
+      status: toUpper(j.status) as TaskStatus,
+      createdAt: toIsoCreated(j),
+    }));
+  }, [jobs]);
+
+  const filteredTasks = useMemo(() => {
+    let list = uiTasks;
+    if (statusFilter !== "all") {
+      const wantedStatus: TaskStatus = statusFilterMap[statusFilter as Exclude<StatusFilter,"all">];
+      list = list.filter((t) => t.status === wantedStatus);
+    }
+    const q = searchQuery.trim().toLowerCase();
+    if (q) {
+      list = list.filter(
+        (t) =>
+          t.title.toLowerCase().includes(q) ||
+          t.phoneNumber.toLowerCase().includes(q) ||
+          t.id.toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [uiTasks, searchQuery, statusFilter]);
 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center gap-4">
-        <Button 
-          variant="ghost" 
-          size="sm" 
-          onClick={() => navigate('/')}
-          className="gap-2"
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => navigate("/")}
+          className="gap-2 w-fit"
         >
           <ArrowLeft className="w-4 h-4" />
           Back to Dashboard
@@ -93,8 +122,9 @@ export default function TaskHistory() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="flex gap-4">
-            <div className="relative flex-1">
+          {/* stack on mobile, row on md+ */}
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <div className="relative md:col-span-2">
               <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Search by task ID, title, or phone number..."
@@ -103,93 +133,62 @@ export default function TaskHistory() {
                 className="pl-10"
               />
             </div>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-48">
+            <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as StatusFilter)}>
+              <SelectTrigger className="w-full">
                 <SelectValue placeholder="Filter by status" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Status</SelectItem>
-                <SelectItem value="completed">Completed</SelectItem>
+                <SelectItem value="completed">Done</SelectItem>
                 <SelectItem value="failed">Failed</SelectItem>
                 <SelectItem value="pending">Pending</SelectItem>
-                <SelectItem value="processing">Processing</SelectItem>
+                <SelectItem value="processing">In Progress</SelectItem>
               </SelectContent>
             </Select>
           </div>
         </CardContent>
       </Card>
 
-      {/* History Table */}
       <Card>
         <CardHeader>
-          <CardTitle>Task History ({filteredHistory.length} tasks)</CardTitle>
+          <CardTitle>Job History ({filteredTasks.length} tasks)</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
-            {filteredHistory.map((task) => (
-              <div 
-                key={task.id} 
+            {filteredTasks.map((task) => (
+              <div
+                key={task.id}
                 className="border rounded-lg p-4 hover:bg-accent/50 transition-colors"
               >
-                <div className="flex items-start justify-between">
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-3">
-                      <h3 className="font-medium text-foreground">{task.title}</h3>
-                      <Badge className={statusColors[task.status]}>
-                        {task.status.charAt(0).toUpperCase() + task.status.slice(1)}
-                      </Badge>
-                    </div>
-                    
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-muted-foreground">
-                      <div>
-                        <span className="font-medium">Task ID:</span> {task.id}
-                      </div>
-                      <div>
-                        <span className="font-medium">Phone:</span> {task.phoneNumber}
-                      </div>
-                      <div>
-                        <span className="font-medium">Assigned to:</span> {task.assignedTo}
-                      </div>
-                      <div>
-                        <span className="font-medium">Duration:</span> {task.duration}
-                      </div>
-                    </div>
-                    
-                    <div className="text-sm text-muted-foreground">
-                      <span className="font-medium">Created:</span> {new Date(task.createdAt).toLocaleDateString()}
-                      {task.completedAt && (
-                        <>
-                          {" • "}
-                          <span className="font-medium">Completed:</span> {new Date(task.completedAt).toLocaleDateString()}
-                        </>
-                      )}
-                    </div>
-                    
-                    {task.error && (
-                      <div className="text-sm text-destructive">
-                        <span className="font-medium">Error:</span> {task.error}
-                      </div>
-                    )}
+                {/* Top row: title left, badge right; wraps on small screens */}
+                <div className="flex w-full items-start gap-3 sm:items-center">
+                  <h3 className="font-medium text-foreground min-w-0 truncate">
+                    {task.title}
+                  </h3>
+                  <Badge
+                    className={`${statusClasses[task.status]} ml-auto self-start sm:self-center`}
+                  >
+                    {prettyStatus(task.status)}
+                  </Badge>
+                </div>
+
+                {/* Details */}
+                <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-muted-foreground sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="break-all">
+                    <span className="font-medium">Job Id:</span> {task.id}
                   </div>
-                  
-                  <div className="flex items-center gap-2">
-                    {task.status === 'completed' && (
-                      <>
-                        <Badge variant="secondary">
-                          {task.filesGenerated} files
-                        </Badge>
-                        <Button size="sm" variant="outline">
-                          <Download className="w-4 h-4 mr-1" />
-                          Export
-                        </Button>
-                      </>
-                    )}
+                  <div className="break-all">
+                    <span className="font-medium">Phone:</span> {task.phoneNumber}
+                  </div>
+                  <div className="col-span-1 sm:col-auto">
+                    <span className="font-medium">Created:</span>{" "}
+                    {new Date(task.createdAt).toLocaleDateString()}
                   </div>
                 </div>
               </div>
             ))}
-            
-            {filteredHistory.length === 0 && (
+
+            {filteredTasks.length === 0 && (
               <div className="text-center py-12">
                 <p className="text-muted-foreground">No tasks found matching your criteria.</p>
               </div>
