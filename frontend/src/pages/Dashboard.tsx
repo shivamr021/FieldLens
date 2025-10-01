@@ -8,7 +8,7 @@ import FilePreviewModal from "@/components/FilePreviewModal";
 import { Plus, Search, Activity, Users, CheckCircle, Clock } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
-import CreateTaskDialog from "./CreateTask"; // must call onCreated(newJob)
+import CreateTaskDialog from "../components/CreateTask"; // must call onCreated(newJob)
 import { fetchJobs, type BackendJob } from "@/lib/api";
 
 // ────────────────────────────────────────────────────────────────────────────────

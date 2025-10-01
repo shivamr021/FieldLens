@@ -2,7 +2,7 @@ import os
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from app.routes import jobs, whatsapp
+from app.routes import jobs, whatsapp,auth
 from typing import Any
 from app.services.ocr import _easyocr  # lazy loader you already have
 
@@ -63,6 +63,7 @@ app.mount("/admin", StaticFiles(directory="admin", html=True), name="admin")
 # Routers
 app.include_router(jobs.router, prefix="/api", tags=["jobs"])
 app.include_router(whatsapp.router, prefix="/api", tags=["whatsapp"])
+app.include_router(auth.router, prefix="/api", tags=["auth"])
 
 # Health & root
 @app.get("/health")

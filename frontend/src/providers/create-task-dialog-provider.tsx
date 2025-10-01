@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, ReactNode } from "react";
-import CreateTaskDialogRHF from "../pages/CreateTask";
+import CreateTaskDialogRHF from "../components/CreateTask";
 
 type Ctx = {
   openCreateTask: () => void;
