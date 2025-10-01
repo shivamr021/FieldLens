@@ -1,12 +1,8 @@
+// src/pages/CreateTask.tsx
 import { useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
-import { Plus, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   Dialog,
@@ -16,8 +12,6 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-
-// shadcn/ui form primitives
 import {
   Form,
   FormField,
@@ -25,24 +19,17 @@ import {
   FormLabel,
   FormControl,
   FormMessage,
-  FormDescription,
 } from "@/components/ui/form";
-
-import { useForm, useFieldArray, Controller } from "react-hook-form";
+import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { createJob, getSectorTemplate, type BackendJob } from "@/lib/api";
 
 const phoneE164 = /^\+?[1-9]\d{6,14}$/;
 
 const FormSchema = z.object({
   whatsappNumber: z.string().regex(phoneE164, "Use E.164 format like +1234567890"),
   sectorNumber: z.string().min(1, "Sector Number is required"),
-  // assignedTo: z.string().optional().default(""),
-  // priority: z.enum(["low", "medium", "high", "urgent"]).optional().or(z.literal("")),
-  // description: z.string().optional().default(""),
-  // metadata: z
-  //   .array(z.object({ key: z.string().min(1, "Key required"), value: z.string().min(1, "Value required") }))
-  //   .default([]),
 });
 
 type FormValues = z.infer<typeof FormSchema>;
@@ -50,53 +37,50 @@ type FormValues = z.infer<typeof FormSchema>;
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onCreated?: (job: BackendJob) => void; // <-- notify parent
 };
 
-export default function CreateTaskDialogRHF({ open, onOpenChange }: Props) {
+export default function CreateTaskDialog({ open, onOpenChange, onCreated }: Props) {
   const { toast } = useToast();
 
   const form = useForm<FormValues>({
     resolver: zodResolver(FormSchema),
-    defaultValues: {
-      whatsappNumber: "",
-      sectorNumber: "",
-    },
+    defaultValues: { whatsappNumber: "", sectorNumber: "" },
     mode: "onSubmit",
   });
-
-  // const { fields, append, remove } = useFieldArray({
-  //   control: form.control,
-  //   name: "metadata",
-  // });
-
-  // Convert metadata array → object on submit
-  // const metadataObject = useMemo(() => {
-  //   const out: Record<string, string> = {};
-  //   for (const row of form.getValues("metadata")) {
-  //     if (row.key) out[row.key] = row.value;
-  //   }
-  //   return out;
-  // }, [form.watch("metadata")]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const onSubmit = (values: FormValues) => {
-    const payload = {
-      ...values,
-    };
-
-    // TODO: replace with your API call
-    // await createTask(payload);
-    toast({
-      title: "Job Created",
-      description: `Job has been created and assigned to ${values.whatsappNumber} in ${values.sectorNumber}`,
-    });
-
-    form.reset();
-    onOpenChange(false);
-  };
 
   const closeAndReset = () => {
     form.reset();
     onOpenChange(false);
+  };
+
+  const onSubmit = async (values: FormValues) => {
+    try {
+      const sector = Number(values.sectorNumber);
+      // fetch sector template to get requiredTypes
+      const tpl = await getSectorTemplate(sector);
+      const requiredTypes = tpl.requiredTypes ?? [];
+
+      const newJob = await createJob({
+        workerPhone: values.whatsappNumber,
+        requiredTypes,
+        sector,
+      });
+
+      toast({
+        title: "Job Created",
+        description: `Job ${newJob.id} created for ${newJob.workerPhone} (sector ${newJob.sector ?? "—"})`,
+      });
+
+      onCreated?.(newJob);       // <-- let dashboard add it immediately
+      closeAndReset();
+    } catch (e: any) {
+      toast({
+        title: "Create failed",
+        description: e?.message ?? "Unknown error",
+        variant: "destructive",
+      });
+    }
   };
 
   return (
@@ -114,7 +98,6 @@ export default function CreateTaskDialogRHF({ open, onOpenChange }: Props) {
           <CardContent className="px-6 pb-6">
             <Form {...form}>
               <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-                {/* Basic Information */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <FormField
                     control={form.control}
@@ -123,13 +106,12 @@ export default function CreateTaskDialogRHF({ open, onOpenChange }: Props) {
                       <FormItem>
                         <FormLabel>Whatsapp Number *</FormLabel>
                         <FormControl>
-                          <Input placeholder="+91" {...field} />
+                          <Input placeholder="+91..." {...field} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
-
                   <FormField
                     control={form.control}
                     name="sectorNumber"
@@ -137,14 +119,14 @@ export default function CreateTaskDialogRHF({ open, onOpenChange }: Props) {
                       <FormItem>
                         <FormLabel>Sector Number *</FormLabel>
                         <FormControl>
-                          <Input type="tel" placeholder="1,2,3,4" {...field} />
+                          <Input type="number" min={0} placeholder="e.g. 1" {...field} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
                 </div>
-                {/* Actions */}
+
                 <DialogFooter className="gap-2 sm:gap-3">
                   <Button type="button" variant="outline" onClick={closeAndReset}>
                     Cancel

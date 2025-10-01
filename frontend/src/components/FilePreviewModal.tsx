@@ -1,62 +1,67 @@
-import { useState } from "react";
+// src/components/FilePreviewModal.tsx
+import React, { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Edit3, Download, Folder, Image as ImageIcon } from "lucide-react";
+import { Download, Edit3, Image as ImageIcon } from "lucide-react";
 
-interface FilePreviewModalProps {
+import {
+  fetchJobDetail,
+  downloadJobXlsx,
+  downloadJobXlsxWithImages,
+  type JobDetail,
+  type PhotoItem,
+} from "@/lib/api";
+
+type Props = {
   isOpen: boolean;
-  onClose: () => void;
   taskId: string;
-}
+  onClose: () => void;
+};
 
-// Mock data for demonstration
-const mockFolders = [
-  {
-    name: "Folder 1",
-    images: Array.from({ length: 14 }, (_, i) => ({
-      id: `f1_img_${i + 1}`,
-      name: `image_${i + 1}.jpg`,
-      url: `https://picsum.photos/300/200?random=${i + 1}`,
-    }))
-  },
-  {
-    name: "Folder 2", 
-    images: Array.from({ length: 14 }, (_, i) => ({
-      id: `f2_img_${i + 1}`,
-      name: `photo_${i + 1}.jpg`,
-      url: `https://picsum.photos/300/200?random=${i + 15}`,
-    }))
-  },
-  {
-    name: "Folder 3",
-    images: Array.from({ length: 14 }, (_, i) => ({
-      id: `f3_img_${i + 1}`,
-      name: `scan_${i + 1}.jpg`,
-      url: `https://picsum.photos/300/200?random=${i + 29}`,
-    }))
-  }
-];
+export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
+  const [data, setData] = useState<JobDetail | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
-const mockExcelData = [
-  { label: "Task ID", value: "TSK_001" },
-  { label: "Phone Number", value: "+1234567890" },
-  { label: "Status", value: "Completed" },
-  { label: "Processed Images", value: "42" },
-  { label: "Success Rate", value: "98.5%" },
-  { label: "Processing Time", value: "2m 34s" },
-];
-
-export function FilePreviewModal({ isOpen, onClose, taskId }: FilePreviewModalProps) {
-  const [editingImage, setEditingImage] = useState<string | null>(null);
+  
   const [imageNames, setImageNames] = useState<Record<string, string>>({});
+  const [editingImage, setEditingImage] = useState<string | null>(null);
 
-  const handleImageNameEdit = (imageId: string, newName: string) => {
-    setImageNames(prev => ({ ...prev, [imageId]: newName }));
+  useEffect(() => {
+    if (!isOpen || !taskId) return;
+    setLoading(true);
+    setErr(null);
+    setData(null);
+    setImageNames({});
+    setEditingImage(null);
+
+    fetchJobDetail(taskId)
+      .then((res) => setData(res))
+      .catch((e: any) => setErr(e?.message ?? "Failed to load job"))
+      .finally(() => setLoading(false));
+  }, [isOpen, taskId]);
+
+  const handleImageNameEdit = (id: string, value: string) => {
+    setImageNames((prev) => ({ ...prev, [id]: value.trim() }));
     setEditingImage(null);
   };
+
+  const rows = [
+    { label: "Job ID", value: taskId },
+    { label: "Worker Phone", value: data?.job.workerPhone ?? "—" },
+    { label: "Status", value: data?.job.status ?? "—" },
+    { label: "Sector", value: data?.job.sector ?? "—" },
+    {
+      label: "Required Types",
+      value: Array.isArray(data?.job.requiredTypes)
+        ? data?.job.requiredTypes.join(", ")
+        : "—",
+    },
+    { label: "Total Photos", value: String(data?.photos?.length ?? 0) },
+    { label: "Created At", value: data?.job.createdAt ?? "—" },
+  ];
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -64,34 +69,50 @@ export function FilePreviewModal({ isOpen, onClose, taskId }: FilePreviewModalPr
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <ImageIcon className="w-5 h-5" />
-            Task Preview - {taskId}
+            Job Preview — {taskId}
           </DialogTitle>
         </DialogHeader>
 
-        <Tabs defaultValue="folders" className="flex-1 overflow-hidden">
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="folders">Image Folders</TabsTrigger>
-            <TabsTrigger value="excel">Excel Preview</TabsTrigger>
-          </TabsList>
+        <Tabs defaultValue="images" className="flex-1 overflow-hidden">
+          <div className="flex items-center justify-between">
+            <TabsList className="grid w-full max-w-xs grid-cols-2">
+              <TabsTrigger value="images">Images</TabsTrigger>
+              <TabsTrigger value="excel">Excel Preview</TabsTrigger>
+            </TabsList>
+          </div>
 
-          <TabsContent value="folders" className="mt-4 overflow-y-auto h-[calc(100%-8rem)]">
-            <div className="space-y-6">
-              {mockFolders.map((folder, folderIndex) => (
-                <div key={folderIndex} className="space-y-3">
-                  <div className="flex items-center gap-2">
-                    <Folder className="w-5 h-5 text-primary" />
-                    <h3 className="font-medium">{folder.name}</h3>
-                    <Badge variant="secondary">{folder.images.length} images</Badge>
+          {/* ---------- IMAGES TAB ---------- */}
+          <TabsContent
+            value="images"
+            className="mt-4 overflow-y-auto h-[calc(100%-8rem)]"
+          >
+            {loading && (
+              <div className="rounded-lg border bg-muted p-6 text-muted-foreground">
+                Loading details…
+              </div>
+            )}
+            {err && (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-6 text-red-700">
+                {err}
+              </div>
+            )}
+
+            {!loading && !err && (
+              <>
+                {(!data?.photos || data.photos.length === 0) ? (
+                  <div className="rounded-lg border bg-muted p-6 text-muted-foreground">
+                    No photos yet.
                   </div>
-                  
+                ) : (
                   <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                    {folder.images.map((image) => (
-                      <div key={image.id} className="space-y-2">
+                    {data.photos.map((image) => (
+                      <figure key={image.id} className="shrink-0 w-32">
                         <div className="relative group">
                           <img
-                            src={image.url}
-                            alt={imageNames[image.id] || image.name}
-                            className="w-full h-24 object-cover rounded-md border"
+                            src={image.s3Url}
+                            alt={image.type}
+                            className="w-32 h-32 object-cover rounded-md border"
+                            loading="lazy"
                           />
                           <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-md flex items-center justify-center">
                             <Button
@@ -103,45 +124,54 @@ export function FilePreviewModal({ isOpen, onClose, taskId }: FilePreviewModalPr
                             </Button>
                           </div>
                         </div>
-                        
                         {editingImage === image.id ? (
                           <Input
-                            defaultValue={imageNames[image.id] || image.name}
+                            defaultValue={imageNames[image.id] || image.type}
                             onBlur={(e) => handleImageNameEdit(image.id, e.target.value)}
                             onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                handleImageNameEdit(image.id, e.currentTarget.value);
+                              if (e.key === "Enter") {
+                                handleImageNameEdit(
+                                  image.id,
+                                  (e.target as HTMLInputElement).value
+                                );
                               }
                             }}
-                            className="text-xs"
+                            className="mt-1 h-7 text-xs"
                             autoFocus
                           />
                         ) : (
-                          <p 
-                            className="text-xs text-muted-foreground cursor-pointer hover:text-foreground"
+                          <figcaption
+                            className="mt-1 text-xs text-muted-foreground cursor-pointer hover:text-foreground truncate"
                             onClick={() => setEditingImage(image.id)}
+                            title={image.s3Url}
                           >
-                            {imageNames[image.id] || image.name}
-                          </p>
+                            {imageNames[image.id] || image.type}
+                          </figcaption>
                         )}
-                      </div>
+                      </figure>
                     ))}
                   </div>
-                </div>
-              ))}
-            </div>
+                )}
+              </>
+            )}
           </TabsContent>
 
+          {/* ---------- EXCEL TAB ---------- */}
           <TabsContent value="excel" className="mt-4">
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="font-medium">Task Report Data</h3>
-                <Button size="sm" variant="outline">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => downloadJobXlsx(taskId)}
+                  disabled={!data || loading}
+                >
                   <Download className="w-4 h-4 mr-2" />
                   Download Excel
                 </Button>
               </div>
-              
+
               <div className="border rounded-lg overflow-hidden">
                 <table className="w-full">
                   <thead className="bg-muted">
@@ -151,8 +181,8 @@ export function FilePreviewModal({ isOpen, onClose, taskId }: FilePreviewModalPr
                     </tr>
                   </thead>
                   <tbody>
-                    {mockExcelData.map((row, index) => (
-                      <tr key={index} className="border-t">
+                    {rows.map((row, idx) => (
+                      <tr key={idx} className="border-t">
                         <td className="p-3 font-medium">{row.label}</td>
                         <td className="p-3">{row.value}</td>
                       </tr>
@@ -164,13 +194,17 @@ export function FilePreviewModal({ isOpen, onClose, taskId }: FilePreviewModalPr
           </TabsContent>
         </Tabs>
 
+        {/* Footer actions */}
         <div className="flex justify-end gap-2 pt-4 border-t">
           <Button variant="outline" onClick={onClose}>
             Close
           </Button>
-          <Button>
+          <Button
+            onClick={() => downloadJobXlsxWithImages(taskId)}
+            disabled={!data || loading}
+          >
             <Download className="w-4 h-4 mr-2" />
-            Export as ZIP
+            Download Excel (with images)
           </Button>
         </div>
       </DialogContent>
