@@ -2,71 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from bson import ObjectId
 from typing import List
 import csv, io
-
+from fastapi.responses import StreamingResponse
 from app.deps import get_db
 from app.schemas import CreateJob, JobOut, PhotoOut
 from app.models import new_job
 from app.services.storage_s3 import presign_url
 # New
 from app.utils import normalize_phone, build_required_types_for_sector, type_label  # add
-router = APIRouter()
-# --- add near the top with your other imports ---
-import os, tempfile
-from typing import Literal, Dict, Any
-from fastapi import UploadFile, File, Form
-from app.services.validate import run_pipeline
-from app.services.imaging import load_bgr  # <-- IMPORTANT: bytes -> BGR np.ndarray
-
-# --- add this route after `router = APIRouter()` ---
-@router.post("/ocr/test", tags=["debug"])
-async def ocr_test(
-    type: Literal["label", "angle"] = Form("label"),
-    file: UploadFile = File(...),
-) -> Dict[str, Any]:
-    """
-    Test OCR/validation from Swagger using the same run_pipeline(img, job_ctx, existing_phashes)
-    path that /api/whatsapp/webhook uses. No DB/S3 writes.
-    """
-    # read file bytes
-    data = await file.read()
-
-    # decode to BGR image (numpy array)
-    try:
-        img = load_bgr(data)
-        if img is None:
-            return {"status": "FAIL", "reason": ["Could not decode image (None)"]}
-    except Exception as e:
-        return {"status": "FAIL", "reason": [f"Image decode error: {e}"]}
-
-    # Map form type -> expectedType used by the pipeline
-    expected = "LABEL" if type == "label" else "AZIMUTH"
-
-    # Call your team’s pipeline with the correct signature
-    result = run_pipeline(
-        img,
-        job_ctx={"expectedType": expected},   # thresholds can be added here if you want
-        existing_phashes=[],                  # none for a standalone test
-    )
-
-    # Normalize a friendly response for Swagger (don’t change your pipeline)
-    fields = result.get("fields") or {
-        "macId": result.get("mac_id"),
-        "rsn": result.get("rsn_id") or result.get("rsn"),
-        "azimuthDeg": result.get("angleDeg"),
-        "azimuthDir": result.get("angleDir"),
-    }
-    checks = result.get("checks") or {"blurScore": result.get("blurScore")}
-
-    return {
-        "type": result.get("type", expected),
-        "status": result.get("status", "FAIL"),
-        "reason": result.get("reason", []),
-        "fields": fields,
-        "checks": checks,
-        "ocrText": result.get("ocrText"),
-    }
-
-
 
 
 
@@ -157,6 +99,64 @@ def export_csv(job_id: str, db=Depends(get_db)):
         "Content-Disposition": f'attachment; filename="job_{job_id}.csv"'
     }
     return Response(content=data, headers=headers, media_type="text/csv")
+
+@router.get("/jobs/{job_id}/export.zip")
+def export_job_zip(job_id: str, db=Depends(get_db)):
+    from fastapi.responses import StreamingResponse
+    import io, os, zipfile
+    import httpx
+    from bson import ObjectId
+
+    # validate id
+    try:
+        _id = ObjectId(job_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid job id")
+
+    job = db.jobs.find_one({"_id": _id})
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # ✅ support both string and ObjectId in photos.jobId
+    photos = list(db.photos.find({"jobId": {"$in": [job_id, _id]}}))
+    if not photos:
+        # You can change this to return an empty zip if you prefer
+        raise HTTPException(status_code=404, detail="No photos for this job")
+
+    mem = io.BytesIO()
+    with zipfile.ZipFile(mem, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for p in photos:
+            ptype = (p.get("type") or "PHOTO").upper()
+            fname = f"{ptype}_{str(p.get('_id'))}.jpg"
+
+            # 1) local file
+            lp = p.get("localPath")
+            if lp and os.path.exists(lp):
+                zf.write(lp, arcname=fname)
+                continue
+
+            # 2) URL (e.g., presigned s3Url stored in the doc)
+            url = p.get("s3Url")
+            if url:
+                try:
+                    # ✅ sync client in a sync route
+                    with httpx.Client(timeout=20) as client:
+                        r = client.get(url)
+                        r.raise_for_status()
+                        zf.writestr(fname, r.content)
+                        continue
+                except Exception:
+                    pass
+
+            # 3) mark missing
+            zf.writestr(fname.replace(".jpg", "_MISSING.txt"), b"Missing image")
+
+    mem.seek(0)
+    return StreamingResponse(
+        mem,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="job_{job_id}.zip"'},
+    )
 
 
 # --- NEW ENDPOINT ---
