@@ -8,10 +8,20 @@ pillow==10.4.0
 numpy==1.26.4
 opencv-python-headless==4.10.0.84
 pytesseract==0.3.10
+openpyxl==3.1.5
 
-# local
+# OCR / Vision
+easyocr==1.7.2
+torch==2.8.0
+torchvision==0.23.0
+scikit-image==0.25.2
+
+# Data handling
+pandas==2.3.3
+
+# local / testing
 mongomock==4.1.2
 python-multipart==0.0.9
 
-# twilio official lib
+# Twilio official lib
 twilio==8.11.0

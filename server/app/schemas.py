@@ -18,6 +18,10 @@ class JobOut(BaseModel):
     status: str
     # Optional but handy for admin UI
     sector: Optional[int] = None     # <-- NEW
+    # --- NEW fields for UI/export ---
+    macId: Optional[str] = None
+    rsnId: Optional[str] = None
+    azimuthDeg: Optional[float] = None
 
 class PhotoOut(BaseModel):
     id: str

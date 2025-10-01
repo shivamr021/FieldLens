@@ -252,17 +252,24 @@ def build_required_types_for_sector(sector: str | None) -> list[str]:
 # ---------------------------------------------------------------------
 # Phone formatting + WhatsApp sender
 # ---------------------------------------------------------------------
-def normalize_phone(p: str) -> str:
-    """
-    Normalize incoming phone; keep + if user sent it; strip other non-digits.
-    (We do NOT add 'whatsapp:' here—sending helpers will.)
-    """
-    if not p:
-        return ""
-    p = p.strip()
-    if p.startswith("+"):
-        return "+" + re.sub(r"\D", "", p)[1:]
-    return re.sub(r"\D", "", p)
+# def normalize_phone(p: str) -> str:
+#     """
+#     Normalize incoming phone; keep + if user sent it; strip other non-digits.
+#     (We do NOT add 'whatsapp:' here—sending helpers will.)
+#     """
+#     if not p:
+#         return ""
+#     p = p.strip()
+#     if p.startswith("+"):
+#         return "+" + re.sub(r"\D", "", p)[91:]
+#     return re.sub(r"\D", "", p)
+
+def normalize_phone(p: str) -> str: 
+    """Normalize incoming Twilio phone params to canonical 'whatsapp:+<E.164>'.""" 
+    if not p: 
+        return "" 
+    digits = re.sub(r'\D', '', p) 
+    return f"whatsapp:+{digits}" if digits else ""
 
 def send_whatsapp_image(to_number: str, image_url: str, text: str = ""):
     """
