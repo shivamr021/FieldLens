@@ -53,6 +53,9 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
     { label: "Worker Phone", value: data?.job.workerPhone ?? "—" },
     { label: "Status", value: data?.job.status ?? "—" },
     { label: "Sector", value: data?.job.sector ?? "—" },
+    { label: "MAC_Id", value: data?.job.macId ?? "—" },
+    { label: "RSN_Id", value: data?.job.rsnId ?? "—" },
+    { label: "AZIMUTH_Deg", value: data?.job.azimuthDeg ?? "—" },
     {
       label: "Required Types",
       value: Array.isArray(data?.job.requiredTypes)

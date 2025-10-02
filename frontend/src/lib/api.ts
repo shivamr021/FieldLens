@@ -35,6 +35,9 @@ export type JobDetail = {
     currentIndex: number;
     status: string;
     sector?: number;
+    macId?:string,
+    rsnId?:string,
+    azimuthDeg?:string,
     createdAt?: string | null;
   };
   photos: PhotoItem[];
