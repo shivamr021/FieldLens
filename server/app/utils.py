@@ -2,7 +2,7 @@
 from __future__ import annotations
 import os
 import re
-
+from typing import List
 # ---------------------------------------------------------------------
 # Robust .env loading (works from repo root OR /server working dir)
 # ---------------------------------------------------------------------
@@ -166,16 +166,36 @@ def canonical_type(ptype: str | None) -> str:
     k = str(ptype).strip().upper()
     return _TYPE_ALIASES.get(k.lower(), k)
 
-def type_label(ptype: str | None) -> str:
-    c = canonical_type(ptype)
-    # Prefer registry label if we have it
-    if c in TYPE_REGISTRY and TYPE_REGISTRY[c].get("label"):
-        return TYPE_REGISTRY[c]["label"]
-    if c == "LABEL":
-        return "Label Photo"
-    if c == "AZIMUTH":
-        return "Azimuth Photo"
-    return (c or "Photo").replace("_", " ").title()
+# def type_label(ptype: str | None) -> str:
+#     c = canonical_type(ptype)
+#     # Prefer registry label if we have it
+#     if c in TYPE_REGISTRY and TYPE_REGISTRY[c].get("label"):
+#         return TYPE_REGISTRY[c]["label"]
+#     if c == "LABEL":
+#         return "Label Photo"
+#     if c == "AZIMUTH":
+#         return "Azimuth Photo"
+#     return (c or "Photo").replace("_", " ").title()
+
+def type_label(t: str) -> str:
+    """Human labels used in UI (extend as needed)."""
+    T = (t or "").upper()
+    return {
+        "INSTALLATION": "Installation Overview",
+        "CLUTTER": "Clutter",
+        "AZIMUTH": "Azimuth / Compass",
+        "A6_GROUNDING": "A6 Grounding",
+        "CPRI_GROUNDING": "CPRI Grounding",
+        "POWER_TERM_A6": "Power Termination (A6)",
+        "CPRI_TERM_A6": "CPRI Termination (A6)",
+        "TILT": "Antenna Tilt",
+        "LABELLING": "Device Label (MAC/RSN)",
+        "ROXTEC": "Roxtec Seal",
+        "A6_PANEL": "A6 Panel",
+        "MCB_POWER": "MCB Power",
+        "CPRI_TERM_SWITCH_CSS": "CPRI Termination (Switch/CSS)",
+        "GROUNDING_OGB_TOWER": "Grounding OGB / Tower",
+    }.get(T, T.title())
 
 def is_validated_type(ptype: str | None) -> bool:
     """
@@ -207,7 +227,7 @@ def type_prompt(ptype: str | None) -> str:
 # ---------------------------------------------------------------------
 # Sector → required types
 # ---------------------------------------------------------------------
-DEFAULT_14_TYPES = [
+ALL_REQUIRED_14: List[str] = [
     "INSTALLATION",
     "CLUTTER",
     "AZIMUTH",
@@ -224,30 +244,26 @@ DEFAULT_14_TYPES = [
     "GROUNDING_OGB_TOWER",
 ]
 
+SECTOR_TEMPLATES: dict[int, List[str]] = {
+    1: ALL_REQUIRED_14,        # same set for now (you can reorder if you like)
+    2: ALL_REQUIRED_14,
+    3: ALL_REQUIRED_14,
+    # add more sectors here…
+}
+
 def build_required_types_for_sector(sector: str | None) -> list[str]:
     """
     Return the ordered list of required types. Keep defaults safe.
     - For most flows, we only require LABEL + AZIMUTH (validated).
     - If you want the full 14-step template for a given sector code, extend below.
     """
-    if not sector:
-        return ["LABEL", "AZIMUTH"]
-
-    s = str(sector).strip().upper()
-    mapping = {
-        # Typical wireless job
-        "FWA": ["LABEL", "AZIMUTH"],
-        "WIRELESS": ["LABEL", "AZIMUTH"],
-
-        # Fiber examples
-        "FTTH": ["LABEL"],
-        "FIBER": ["LABEL"],
-
-        # If you explicitly want the 14-step set
-        "FULL_14": DEFAULT_14_TYPES,
-        "DEFAULT_14": DEFAULT_14_TYPES,
-    }
-    return mapping.get(s, ["LABEL", "AZIMUTH"])
+    try:
+        if sector is None:
+            return ALL_REQUIRED_14
+        return SECTOR_TEMPLATES.get(int(sector), ALL_REQUIRED_14)
+    except Exception:
+        # Never return the tiny two-item default again
+        return ALL_REQUIRED_14
 
 # ---------------------------------------------------------------------
 # Phone formatting + WhatsApp sender

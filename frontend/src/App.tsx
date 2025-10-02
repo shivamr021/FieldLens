@@ -14,13 +14,24 @@ import NotFound from "./pages/NotFound";
 import { ThemeProvider } from "./components/theme-provider";
 import { ModeToggle } from "./components/toggle";
 import ProtectedRoute from "./auth/ProtectedRoute";
-import { AuthProvider } from "./auth/AuthProvider";
+import { AuthProvider, useAuth } from "./auth/AuthProvider";
 import { CreateTaskDialogProvider } from "@/providers/create-task-dialog-provider";
 import Login from "./pages/Login";
-
+import { Button } from "./components/ui/button";
+import { useNavigate,useLocation } from "react-router-dom";
 const queryClient = new QueryClient();
 
 function ProtectedLayout() {
+  const nav = useNavigate();
+  const {logout} = useAuth();
+  const handleLogout = async ()=>{
+    try {
+      await logout();
+      // nav("/login", { replace: true });
+    } catch (e: any) {
+      console.error(e?.response?.data?.detail ?? "Logout failed");
+    }
+  }
   return (
     <div className="flex w-full">
       <AppSidebar />
@@ -32,7 +43,10 @@ function ProtectedLayout() {
               <div className="w-6 h-6 bg-gradient-primary rounded-md" />
               <span className="font-semibold text-foreground">Automation Hub</span>
             </div>
-            <ModeToggle />
+            <div>
+              <ModeToggle />
+              <Button onClick={handleLogout}>Log Out</Button>
+            </div>
           </div>
         </header>
         <main className="flex-1 p-6">
