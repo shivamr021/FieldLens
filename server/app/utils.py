@@ -2,7 +2,7 @@
 from __future__ import annotations
 import os
 import re
-from typing import List
+
 # ---------------------------------------------------------------------
 # Robust .env loading (works from repo root OR /server working dir)
 # ---------------------------------------------------------------------
@@ -177,6 +177,7 @@ def canonical_type(ptype: str | None) -> str:
 #         return "Azimuth Photo"
 #     return (c or "Photo").replace("_", " ").title()
 
+# (keep your existing type_label() helper as-is, or ensure it handles these names)
 def type_label(t: str) -> str:
     """Human labels used in UI (extend as needed)."""
     T = (t or "").upper()
@@ -227,7 +228,7 @@ def type_prompt(ptype: str | None) -> str:
 # ---------------------------------------------------------------------
 # Sector → required types
 # ---------------------------------------------------------------------
-ALL_REQUIRED_14: List[str] = [
+DEFAULT_14_TYPES = [
     "INSTALLATION",
     "CLUTTER",
     "AZIMUTH",
@@ -244,26 +245,27 @@ ALL_REQUIRED_14: List[str] = [
     "GROUNDING_OGB_TOWER",
 ]
 
+# Per-sector overrides if you need to vary order or omit a type.
+# If a sector is not present here, we fall back to ALL_REQUIRED_14.
 SECTOR_TEMPLATES: dict[int, List[str]] = {
-    1: ALL_REQUIRED_14,        # same set for now (you can reorder if you like)
-    2: ALL_REQUIRED_14,
-    3: ALL_REQUIRED_14,
+    1: DEFAULT_14_TYPES,        # same set for now (you can reorder if you like)
+    2: DEFAULT_14_TYPES,
+    3: DEFAULT_14_TYPES,
     # add more sectors here…
 }
 
-def build_required_types_for_sector(sector: str | None) -> list[str]:
+def build_required_types_for_sector(sector: int | None) -> List[str]:
     """
-    Return the ordered list of required types. Keep defaults safe.
-    - For most flows, we only require LABEL + AZIMUTH (validated).
-    - If you want the full 14-step template for a given sector code, extend below.
+    Return the required photo-type codes for a given sector.
+    If the sector is unknown/None, return the full 14-type list.
     """
     try:
         if sector is None:
-            return ALL_REQUIRED_14
-        return SECTOR_TEMPLATES.get(int(sector), ALL_REQUIRED_14)
+            return DEFAULT_14_TYPES
+        return SECTOR_TEMPLATES.get(int(sector), DEFAULT_14_TYPES)
     except Exception:
         # Never return the tiny two-item default again
-        return ALL_REQUIRED_14
+        return DEFAULT_14_TYPES
 
 # ---------------------------------------------------------------------
 # Phone formatting + WhatsApp sender

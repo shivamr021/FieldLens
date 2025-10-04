@@ -72,3 +72,36 @@ def has_big_circle(img) -> bool:
         param1=80, param2=40, minRadius=40, maxRadius=0
     )
     return circles is not None
+
+def crop_label_region(bgr: np.ndarray, max_pad: int = 20) -> np.ndarray:
+    """
+    Heuristic crop: find the largest text/edge-dense region and return it.
+    Falls back to the original image if nothing useful is found.
+    """
+    if bgr is None or bgr.size == 0:
+        return bgr
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    gray = cv2.GaussianBlur(gray, (5, 5), 0)
+
+    # Strong edges → contours
+    thr = cv2.adaptiveThreshold(
+        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY_INV, 31, 11
+    )
+    contours, _ = cv2.findContours(thr, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return bgr
+
+    # Choose the largest reasonable contour (ignore very small)
+    H, W = bgr.shape[:2]
+    area_min = (H * W) * 0.03
+    biggest = max(contours, key=cv2.contourArea)
+    if cv2.contourArea(biggest) < area_min:
+        return bgr
+
+    x, y, w, h = cv2.boundingRect(biggest)
+    x0 = max(0, x - max_pad); y0 = max(0, y - max_pad)
+    x1 = min(W, x + w + max_pad); y1 = min(H, y + h + max_pad)
+    roi = bgr[y0:y1, x0:x1]
+    return roi if roi.size > 0 else bgr
+    

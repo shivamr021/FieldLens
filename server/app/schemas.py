@@ -3,11 +3,16 @@ from typing import List, Optional, Literal, Dict, Any
 
 PhotoType = str
 
+DEFAULT_14 = [
+    "INSTALLATION", "CLUTTER", "AZIMUTH", "A6_GROUNDING", "CPRI_GROUNDING",
+    "POWER_TERM_A6", "CPRI_TERM_A6", "TILT", "LABELLING", "ROXTEC", "A6_PANEL",
+    "MCB_POWER", "CPRI_TERM_SWITCH_CSS", "GROUNDING_OGB_TOWER"
+]
 
 class CreateJob(BaseModel):
     workerPhone: str
-    requiredTypes: List[PhotoType] = Field(default_factory=lambda: ["LABELLING", "AZIMUTH"])
-    sector: Optional[int] = None     # <-- NEW
+    requiredTypes: List[PhotoType] = Field(default_factory=lambda: DEFAULT_14)
+    sector: Optional[int] = None
 
 
 class JobOut(BaseModel):

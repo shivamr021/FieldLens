@@ -1,3 +1,4 @@
+# app/services/validate.py
 from typing import Dict, List
 from app.services.imaging import variance_of_laplacian, largest_quadrilateral_skew_deg
 from app.services.ocr import ocr_text_block, ocr_single_line, extract_label_fields, extract_azimuth
@@ -35,16 +36,14 @@ def run_pipeline(img, job_ctx, existing_phashes: list[str]) -> Dict:
     ptype = (job_ctx.get("expectedType") or "").upper()
     if not ptype:
         # Only classify when caller did not tell us the type
-        # (classification may use OCR hints internally; keep it as-is)
-        # To avoid heavy OCR here, do not build ocr_hint preemptively.
         ptype = classify(img, ocr_hint=None)
 
-    # 3) Duplicate check (always)
+    # 3) Duplicate check (INFO ONLY now — does NOT fail)
     cur_phash = phash(img)
     is_dup = any(hamming(cur_phash, prev) <= th["dup_hamming_max"] for prev in existing_phashes)
     checks["isDuplicate"] = is_dup
-    if is_dup:
-        issues.append("Duplicate image of a previously submitted photo")
+    # IMPORTANT: we no longer append a failure for duplicates.
+    # This lets you resend the same image in the same chat without touching whatsapp.py.
 
     fields: Dict = {}
     skew = None
@@ -58,15 +57,16 @@ def run_pipeline(img, job_ctx, existing_phashes: list[str]) -> Dict:
         # OCR ONLY for labels (MAC/RSN)
         has_ids = False
         if "Image is blurry" not in issues:  # optional short-circuit
-            # Use your preferred combo for best yield
+            # Keep exactly what you had (simple & working for RSN)
             text_block = ocr_text_block(img)
             text_line  = ocr_single_line(img)
-            ocr_hint   = (text_block + " " + text_line).strip()
+            # Preserve a line break so MAC-line heuristics work better downstream
+            ocr_hint   = (text_block + "\n" + text_line).strip()
             fields     = extract_label_fields(ocr_hint)
             has_ids    = bool(fields.get("macId")) or bool(fields.get("rsn"))
             checks["hasLabelIds"] = bool(has_ids)
 
-        # ⬇️ NEW: skew is a *warning* if IDs are readable; hard-fail only if both skew high *and* no IDs
+        # skew is a *warning* if IDs are readable; hard-fail only if both skew high *and* no IDs
         if skew is not None and skew > th["label_skew_max"]:
             if not has_ids:
                 issues.append("Label angle too skewed")
@@ -92,7 +92,7 @@ def run_pipeline(img, job_ctx, existing_phashes: list[str]) -> Dict:
     return {
         "type": ptype,
         "phash": cur_phash,
-        "ocrText": None,   # optional: remove huge text payload (kept minimal)
+        "ocrText": None,   # keep minimal
         "fields": fields,
         "checks": checks,
         "status": status,
