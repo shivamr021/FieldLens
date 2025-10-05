@@ -1,43 +1,14 @@
-// src/lib/api.ts
 import axios from "axios";
 
-const BASE =
-  import.meta.env.VITE_API_BASE_URL || // <- preferred key
-  import.meta.env.VITE_API_URL ||      // fallback if you already use this
-  `${window.location.origin.replace(/\/$/, "")}/api`;
-
 export const api = axios.create({
-  baseURL: BASE,
-  withCredentials: true, // REQUIRED so the HttpOnly session cookie is sent
+  baseURL: import.meta.env.VITE_API_URL || "http://127.0.0.1:8000/api",
+  withCredentials: true,
   headers: {
     "X-Requested-With": "XMLHttpRequest",
   },
 });
 
-// ---- Global 401 handler -> redirect to /login ----
-api.interceptors.response.use(
-  (res) => res,
-  (err) => {
-    const status = err?.response?.status;
-    if (status === 401) {
-      // avoid loop if already on /login
-      const onLogin = window.location.pathname.startsWith("/login");
-      if (!onLogin) {
-        const to = "/login";
-        try {
-          // preserve where user was going
-          const from = encodeURIComponent(window.location.pathname + window.location.search);
-          window.location.assign(`${to}?from=${from}`);
-        } catch {
-          window.location.assign(to);
-        }
-      }
-    }
-    return Promise.reject(err);
-  }
-);
-
-// ---------- Types ----------
+// Job types from backend
 export type BackendJob = {
   id: string;
   workerPhone: string;
@@ -61,46 +32,30 @@ export type PhotoItem = {
 
 export type JobDetail = {
   job: {
-    id: string;               // <-- backend returns "id" (not _id)
+    _id: string;
     workerPhone: string;
     requiredTypes: string[];
     currentIndex: number;
     status: string;
     sector?: number;
-    macId?: string;
-    rsnId?: string;
-    azimuthDeg?: number | string;
+    macId?:string,
+    rsnId?:string,
+    azimuthDeg?:string,
     createdAt?: string | null;
-    updatedAt?: string | null;
   };
   photos: PhotoItem[];
 };
+// ---------------- API FUNCTIONS ----------------
 
-// ---------- Helpers ----------
-function downloadBlob(data: BlobPart, suggestedName: string, contentDisposition?: string) {
-  // Try to read "filename=..." from Content-Disposition
-  let filename = suggestedName;
-  const m = /filename\*?=(?:UTF-8'')?("?)([^";]+)\1/i.exec(contentDisposition || "");
-  if (m?.[2]) filename = decodeURIComponent(m[2]);
-
-  const url = URL.createObjectURL(new Blob([data]));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
-
-// ---------- API calls ----------
 export async function fetchJobs(): Promise<BackendJob[]> {
   const { data } = await api.get("/jobs");
+  console.log(data);
+  
   return data;
 }
 
-export async function fetchJobDetail(id: string): Promise<JobDetail> {
-  const { data } = await api.get(`/jobs/${encodeURIComponent(id)}`);
+export async function fetchJobDetail(id: string) {
+  const { data } = await api.get(`/jobs/${id}`);
   return data;
 }
 
@@ -114,24 +69,42 @@ export async function createJob(input: {
 }
 
 export async function downloadJobXlsx(id: string) {
-  const res = await api.get(`/jobs/${encodeURIComponent(id)}/export.xlsx`, {
+  const { data } = await api.get(`/jobs/${id}/export.xlsx`, {
     responseType: "blob",
   });
-  downloadBlob(res.data, `job_${id}.xlsx`, res.headers["content-disposition"]);
+  const url = window.URL.createObjectURL(new Blob([data]));
+  const link = document.createElement("a");
+  link.href = url;
+  link.setAttribute("download", `job_${id}.xlsx`);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
 }
-
 export async function downloadJobZip(id: string) {
-  const res = await api.get(`/jobs/${encodeURIComponent(id)}/export.zip`, {
+  const { data } = await api.get(`/jobs/${encodeURIComponent(id)}/export.zip`, {
     responseType: "blob",
   });
-  downloadBlob(res.data, `job_${id}.zip`, res.headers["content-disposition"]);
+  const url = URL.createObjectURL(new Blob([data], { type: "application/zip" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `job_${id}.zip`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 export async function downloadJobXlsxWithImages(id: string) {
-  const res = await api.get(`/jobs/${encodeURIComponent(id)}/export_with_images.xlsx`, {
+  const { data } = await api.get(`/jobs/${id}/export_with_images.xlsx`, {
     responseType: "blob",
   });
-  downloadBlob(res.data, `job_${id}_with_images.xlsx`, res.headers["content-disposition"]);
+  const url = window.URL.createObjectURL(new Blob([data]));
+  const link = document.createElement("a");
+  link.href = url;
+  link.setAttribute("download", `job_${id}_with_images.xlsx`);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
 }
 
 export async function getSectorTemplate(sector: number) {
