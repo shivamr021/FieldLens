@@ -18,13 +18,13 @@ import { AuthProvider, useAuth } from "./auth/AuthProvider";
 import { CreateTaskDialogProvider } from "@/providers/create-task-dialog-provider";
 import Login from "./pages/Login";
 import { Button } from "./components/ui/button";
-import { useNavigate,useLocation } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 const queryClient = new QueryClient();
 
 function ProtectedLayout() {
   const nav = useNavigate();
-  const {logout} = useAuth();
-  const handleLogout = async ()=>{
+  const { logout } = useAuth();
+  const handleLogout = async () => {
     try {
       await logout();
       // nav("/login", { replace: true });
@@ -33,27 +33,47 @@ function ProtectedLayout() {
     }
   }
   return (
-    <div className="flex w-full">
+    <div className="flex w-full min-h-screen">
       <AppSidebar />
+
       <div className="flex-1 flex flex-col">
-        <header className="h-14 border-b bg-card/50 backdrop-blur-sm flex items-center px-6">
-          <SidebarTrigger className="-ml-1" />
-          <div className="flex items-center w-full justify-between gap-2 ml-4">
-            <div className="flex gap-2">
-              <div className="w-6 h-6 bg-gradient-primary rounded-md" />
-              <span className="font-semibold text-foreground">Automation Hub</span>
-            </div>
-            <div>
-              <ModeToggle />
-              <Button onClick={handleLogout}>Log Out</Button>
+        <header
+          className="
+        border-b bg-card/50 backdrop-blur-sm
+        flex flex-wrap items-center gap-3 sm:gap-4
+        px-3 sm:px-6 py-2
+      "
+        >
+          {/* Left: sidebar trigger + brand */}
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+            <SidebarTrigger className="-ml-1 hidden xs:inline-flex" />
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-6 h-6 bg-gradient-primary rounded-md shrink-0" />
+              <span className="font-semibold text-foreground truncate">
+                Automation Hub
+              </span>
             </div>
           </div>
+
+          {/* Right: actions (mode + logout) — push right on >=sm */}
+          <div className="ml-auto flex items-center gap-2 sm:gap-3">
+            <ModeToggle />
+            <Button
+              onClick={handleLogout}
+              size="sm"
+              className="h-8 px-3"
+            >
+              Log Out
+            </Button>
+          </div>
         </header>
-        <main className="flex-1 p-6">
+
+        <main className="flex-1 p-3 sm:p-6">
           <Outlet />
         </main>
       </div>
     </div>
+
   );
 }
 
