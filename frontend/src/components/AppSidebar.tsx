@@ -11,6 +11,7 @@ const items = [
   { title: "Create Task", icon: Plus, type: "action" as const }, // <- action, no url
   { title: "Task History", url: "/history", icon: FileText, type: "link" as const },
   { title: "Exports", url: "/exports", icon: Download, type: "link" as const },
+  { title: "Settings", url: "/settings", icon: Settings, type: "link" as const },
 ];
 
 export function AppSidebar() {
