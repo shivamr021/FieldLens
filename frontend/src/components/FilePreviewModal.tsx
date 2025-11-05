@@ -101,7 +101,8 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
   const groupsByType = useMemo(() => {
     const map = new Map<string, PhotoVM[]>();
     photos.forEach((p) => {
-      const key = (p.type || "UNKNOWN").toString();
+      // --- RECOMMENDED: Normalize key to uppercase to match TYPE_ORDER ---
+      const key = (p.type || "UNKNOWN").toString().toUpperCase();
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(p);
     });
@@ -136,12 +137,29 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
   }, [groupsByType]);
 
   const [selectedSector, setSelectedSector] = useState<number | null>(null);
+
+  // --- CHANGED: This effect now *only* depends on `sectors` ---
+  // This prevents the user's selection from being reset incorrectly.
   useEffect(() => {
-    if (selectedSector == null && sectors.length) setSelectedSector(sectors[0]);
-    else if (selectedSector != null && !sectors.includes(selectedSector)) {
+    // This effect synchronizes the selectedSector *from* the sectors list.
+    // It should only run when the `sectors` list itself changes.
+
+    if (sectors.length === 0) {
+      // No sectors, nothing to select.
+      return;
+    }
+
+    if (selectedSector == null) {
+      // Case 1: No sector is selected (e.g., initial load), default to the first.
+      setSelectedSector(sectors[0]);
+    } else if (!sectors.includes(selectedSector)) {
+      // Case 2: A sector is selected, but it's no longer in the list (e.g., data re-loaded).
+      // Reset to the first valid sector.
       setSelectedSector(sectors[0]);
     }
-  }, [sectors, selectedSector]);
+    
+    // Case 3 (Implicit): A sector is selected AND it's still valid. Do nothing.
+  }, [sectors]); // <-- Only depend on `sectors`
 
   // 3) Build the sector view
   //    Prefer explicit sector match; if sector missing, use “nth photo of that type”.
