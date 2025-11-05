@@ -1,11 +1,10 @@
 // src/components/FilePreviewModal.tsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Download, Edit3, Image as ImageIcon } from "lucide-react";
-
 import {
   fetchJobDetail,
   downloadJobXlsx,
@@ -13,10 +12,44 @@ import {
   type JobDetail,
 } from "@/lib/api";
 
+// If you have shadcn Select installed, use it for a nicer dropdown:
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
 type Props = {
   isOpen: boolean;
   taskId: string;
   onClose: () => void;
+};
+
+// Keep your canonical 14-step order so each sector shows in a consistent layout
+const TYPE_ORDER = [
+  "INSTALLATION",
+  "CLUTTER",
+  "AZIMUTH",
+  "A6 GROUNDING",
+  "CPRI GROUNDING",
+  "POWER TERM A6",
+  "CPRI TERM A6",
+  "TILT",
+  "LABELLING",
+  "ROXTEC",
+  "A6 PANEL",
+  "MCB POWER",
+  "CPRI TERM SWITCH ...", // adjust to exact string if needed
+  "GROUNDING OGB T..."    // adjust to exact string if needed
+];
+
+const idxOfType = (t?: string) => {
+  const i = TYPE_ORDER.findIndex(
+    (x) => x.toLowerCase() === String(t || "").toLowerCase()
+  );
+  return i === -1 ? 999 : i;
 };
 
 export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
@@ -27,6 +60,21 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
   const [imageNames, setImageNames] = useState<Record<string, string>>({});
   const [editingImage, setEditingImage] = useState<string | null>(null);
 
+  // sector state
+  const sectors = useMemo(() => {
+    if (!data?.photos) return [];
+    const s = Array.from(
+      new Set(
+        data.photos
+          .map((p: any) => Number(p.sector))
+          .filter((n) => !Number.isNaN(n))
+      )
+    ).sort((a, b) => a - b);
+    return s.length ? s : [1]; // fallback to Sector 1 if none found
+  }, [data?.photos]);
+
+  const [selectedSector, setSelectedSector] = useState<number | null>(null);
+
   useEffect(() => {
     if (!isOpen || !taskId) return;
     setLoading(true);
@@ -36,7 +84,18 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
     setEditingImage(null);
 
     fetchJobDetail(taskId)
-      .then((res) => setData(res))
+      .then((res) => {
+        setData(res);
+        // choose default sector once we know available sectors
+        const s = Array.from(
+          new Set(
+            (res.photos || [])
+              .map((p: any) => Number(p.sector))
+              .filter((n: number) => !Number.isNaN(n))
+          )
+        ).sort((a, b) => a - b);
+        setSelectedSector(s.length ? s[0] : 1);
+      })
       .catch((e: any) => setErr(e?.message ?? "Failed to load job"))
       .finally(() => setLoading(false));
   }, [isOpen, taskId]);
@@ -46,30 +105,57 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
     setEditingImage(null);
   };
 
+  // Client-side sector filter + type order
+  const visiblePhotos = useMemo(() => {
+    if (!data?.photos) return [];
+    const filtered = data.photos.filter(
+      (p: any) => selectedSector == null || Number(p.sector) === Number(selectedSector)
+    );
+    return [...filtered].sort((a: any, b: any) => idxOfType(a.type) - idxOfType(b.type));
+  }, [data?.photos, selectedSector]);
+
+  // --- Optional: Server-side fetch when sector changes ---
+  // If you add an API like GET /api/jobs/:id?sector=N, you can use this block instead of the client-side filter above.
+  /*
+  useEffect(() => {
+    if (!isOpen || !taskId || selectedSector == null) return;
+    setLoading(true);
+    setErr(null);
+
+    fetch(`/api/jobs/${taskId}?sector=${selectedSector}`)
+      .then((r) => r.json())
+      .then((res) => {
+        // expecting { job, photos }
+        setData((prev) => (res ? res : prev));
+      })
+      .catch((e) => setErr(e?.message ?? "Failed to load sector photos"))
+      .finally(() => setLoading(false));
+  }, [isOpen, taskId, selectedSector]);
+  */
+
   const rows =
     data
       ? [
           { label: "Job ID", value: taskId },
-          { label: "Worker Phone", value: data.job.workerPhone ?? "—" },
-          { label: "Status", value: data.job.status ?? "—" },
-          { label: "Sector", value: data.job.sector ?? "—" },
-          { label: "MAC_Id", value: data.job.macId ?? "—" },
-          { label: "RSN_Id", value: data.job.rsnId ?? "—" },
-          { label: "AZIMUTH_Deg", value: data.job.azimuthDeg ?? "—" },
+          { label: "Worker Phone", value: (data as any).job?.workerPhone ?? "—" },
+          { label: "Status", value: (data as any).job?.status ?? "—" },
+          { label: "Sector", value: (data as any).job?.sector ?? "—" },
+          { label: "MAC_Id", value: (data as any).job?.macId ?? "—" },
+          { label: "RSN_Id", value: (data as any).job?.rsnId ?? "—" },
+          { label: "AZIMUTH_Deg", value: (data as any).job?.azimuthDeg ?? "—" },
           {
             label: "Required Types",
-            value: Array.isArray(data.job.requiredTypes)
-              ? data.job.requiredTypes.join(", ")
+            value: Array.isArray((data as any).job?.requiredTypes)
+              ? (data as any).job?.requiredTypes.join(", ")
               : "—",
           },
-          { label: "Total Photos", value: String(data.photos?.length ?? 0) },
-          { label: "Created At", value: String(data.job.createdAt ?? "—") },
+          { label: "Total Photos", value: String((data.photos?.length ?? 0)) },
+          { label: "Created At", value: String((data as any).job?.createdAt ?? "—") },
         ]
       : [];
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      {/* Make dialog flex column (no overflow-hidden) */}
       <DialogContent className="max-w-6xl h-[80vh] flex flex-col">
         <DialogHeader className="shrink-0">
           <DialogTitle className="flex items-center gap-2">
@@ -78,13 +164,46 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
           </DialogTitle>
         </DialogHeader>
 
-        {/* Tabs container fills remaining height */}
         <Tabs defaultValue="images" className="flex-1 min-h-0 flex flex-col">
           <div className="flex items-center justify-between pb-2">
             <TabsList className="grid w-full max-w-xs grid-cols-2">
               <TabsTrigger value="images">Images</TabsTrigger>
-              <TabsTrigger value="excel">Excel Preview</TabsTrigger>
+              <TabsTrigger value="excel">Excel</TabsTrigger>
             </TabsList>
+
+            {/* Sector selector on the right */}
+            {sectors.length > 0 && (
+              <div className="ml-auto flex items-center gap-2">
+                <span className="text-sm text-muted-foreground">Sector</span>
+                {/* shadcn Select */}
+                <Select
+                  value={selectedSector?.toString() ?? ""}
+                  onValueChange={(v) => setSelectedSector(Number(v))}
+                >
+                  <SelectTrigger className="w-36">
+                    <SelectValue placeholder="Select sector" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {sectors.map((s) => (
+                      <SelectItem key={s} value={String(s)}>
+                        {`Sector ${s}`}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {/* If you don't have shadcn Select, replace the above with:
+                  <select
+                    value={selectedSector ?? ""}
+                    onChange={(e) => setSelectedSector(Number(e.target.value))}
+                    className="border rounded-md px-3 py-2 text-sm"
+                  >
+                    {sectors.map((s) => (
+                      <option key={s} value={s}>{`Sector ${s}`}</option>
+                    ))}
+                  </select>
+                */}
+              </div>
+            )}
           </div>
 
           {/* ---------- IMAGES TAB ---------- */}
@@ -102,13 +221,15 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
               )}
               {!loading && !err && (
                 <>
-                  {(!data?.photos || data.photos.length === 0) ? (
+                  {(!visiblePhotos || visiblePhotos.length === 0) ? (
                     <div className="rounded-lg border bg-muted p-6 text-muted-foreground">
-                      No photos yet.
+                      {selectedSector != null
+                        ? `No photos for Sector ${selectedSector}.`
+                        : "No photos yet."}
                     </div>
                   ) : (
                     <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                      {data.photos.map((image) => (
+                      {visiblePhotos.map((image: any) => (
                         <figure key={image.id} className="shrink-0 w-32">
                           <div className="relative group">
                             <img
@@ -144,9 +265,9 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
                             />
                           ) : (
                             <figcaption
-                              className="mt-1 text-xs text-muted-foreground cursor-pointer hover:text-foreground truncate"
+                              className="mt-1 text-[10px] text-muted-foreground cursor-pointer hover:text-foreground truncate uppercase tracking-wide"
                               onClick={() => setEditingImage(image.id)}
-                              title={image.s3Url}
+                              title={`${image.type} • Sector ${image.sector}`}
                             >
                               {imageNames[image.id] || image.type}
                             </figcaption>
