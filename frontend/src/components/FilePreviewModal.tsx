@@ -12,7 +12,6 @@ import {
   type JobDetail,
 } from "@/lib/api";
 
-// shadcn Select (fallback <select> snippet kept in comments below)
 import {
   Select,
   SelectContent,
@@ -27,16 +26,34 @@ type Props = {
   onClose: () => void;
 };
 
-// Local view model for photos (keeps TS happy even if JobDetail is broad)
 type PhotoVM = {
-  id: string;
+  id?: string;
+  _id?: string;
   s3Url?: string;
   localUrl?: string;
   type?: string;
-  sector?: number | string;
+  // plus any unknown fields
+  [k: string]: any;
 };
 
-// Keep canonical order so each sector shows in a consistent layout
+// ——— Helpers ———
+
+// Try multiple places/keys where “sector” might live.
+function getSector(p: PhotoVM): number | null {
+  const raw =
+    p.sector ??
+    p.Sector ??
+    p.sectorNo ??
+    p.sectorIndex ??
+    p.meta?.sector ??
+    p.details?.sector ??
+    p.jobSector ??
+    null;
+
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
 const TYPE_ORDER = [
   "INSTALLATION",
   "CLUTTER",
@@ -50,8 +67,8 @@ const TYPE_ORDER = [
   "ROXTEC",
   "A6 PANEL",
   "MCB POWER",
-  "CPRI TERM SWITCH ...", // adjust to exact strings if needed
-  "GROUNDING OGB T..."    // adjust to exact strings if needed
+  "CPRI TERM SWITCH ...",
+  "GROUNDING OGB T..."
 ];
 
 const idxOfType = (t?: string) => {
@@ -69,10 +86,8 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
   const [imageNames, setImageNames] = useState<Record<string, string>>({});
   const [editingImage, setEditingImage] = useState<string | null>(null);
 
-  // Which sector is selected in the UI
   const [selectedSector, setSelectedSector] = useState<number | null>(null);
 
-  // Fetch job detail when opened or task changes
   useEffect(() => {
     if (!isOpen || !taskId) return;
     setLoading(true);
@@ -85,35 +100,47 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
       .then((res) => {
         setData(res);
 
-        // Pick a default sector based on the photos present
-        const s = Array.from(
+        const photos = (res.photos as PhotoVM[]) ?? [];
+        const sectorList = Array.from(
           new Set(
-            (res.photos || [])
-              .map((p: any) => Number(p.sector))
-              .filter((n: number) => !Number.isNaN(n))
+            photos
+              .map(getSector)
+              .filter((n): n is number => n !== null)
           )
         ).sort((a, b) => a - b);
 
-        setSelectedSector(s.length ? s[0] : 1); // default to first or 1
+        // Debug: see what we actually got
+        if (typeof window !== "undefined" && process.env.NODE_ENV !== "production") {
+          console.table(
+            photos.slice(0, 20).map((p) => ({
+              id: p.id || p._id,
+              sector: getSector(p),
+              raw_sector: p.sector,
+              type: p.type,
+            }))
+          );
+          // Also log the sector list
+          console.log("Sectors present:", sectorList);
+        }
+
+        setSelectedSector(sectorList.length ? sectorList[0] : 1);
       })
       .catch((e: any) => setErr(e?.message ?? "Failed to load job"))
       .finally(() => setLoading(false));
   }, [isOpen, taskId]);
 
-  // All sectors available in this job (sorted)
+  // Build sector options every render (simple + robust)
   const sectors = useMemo(() => {
-    const src = (data?.photos as any[] | undefined) ?? [];
+    const photos = (data?.photos as PhotoVM[] | undefined) ?? [];
     const s = Array.from(
       new Set(
-        src
-          .map((p) => Number((p as PhotoVM).sector))
-          .filter((n) => !Number.isNaN(n))
+        photos.map(getSector).filter((n): n is number => n !== null)
       )
     ).sort((a, b) => a - b);
     return s.length ? s : [1];
   }, [data?.photos]);
 
-  // Keep selectedSector valid if sectors list changes (e.g., different job)
+  // Keep selectedSector valid if sectors change
   useEffect(() => {
     if (selectedSector == null && sectors.length) {
       setSelectedSector(sectors[0]);
@@ -122,18 +149,14 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
     }
   }, [sectors, selectedSector]);
 
-  // Sector-filtered + type-sorted photos for display
+  // Filter and sort photos by sector + type order
   const visiblePhotos: PhotoVM[] = useMemo(() => {
-    const src = (data?.photos as any[] | undefined) ?? [];
-    const filtered = src.filter(
-      (p) =>
-        selectedSector == null ||
-        Number((p as PhotoVM).sector) === Number(selectedSector)
-    ) as PhotoVM[];
-
-    return [...filtered].sort(
-      (a, b) => idxOfType(a.type) - idxOfType(b.type)
-    );
+    const src = (data?.photos as PhotoVM[] | undefined) ?? [];
+    const filtered = src.filter((p) => {
+      const s = getSector(p);
+      return selectedSector == null ? true : s === selectedSector;
+    });
+    return filtered.sort((a, b) => idxOfType(a.type) - idxOfType(b.type));
   }, [data?.photos, selectedSector]);
 
   const handleImageNameEdit = (id: string, value: string) => {
@@ -157,7 +180,7 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
               ? (data as any).job?.requiredTypes.join(", ")
               : "—",
           },
-          { label: "Total Photos", value: String((data.photos?.length ?? 0)) },
+          { label: "Total Photos", value: String((data?.photos as any[])?.length ?? 0) },
           { label: "Created At", value: String((data as any).job?.createdAt ?? "—") },
         ]
       : [];
@@ -198,17 +221,6 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
                     ))}
                   </SelectContent>
                 </Select>
-
-                {/* Fallback if you don't use shadcn Select:
-                <select
-                  value={selectedSector ?? ""}
-                  onChange={(e) => setSelectedSector(Number(e.target.value))}
-                  className="border rounded-md px-3 py-2 text-sm"
-                >
-                  {sectors.map((s) => (
-                    <option key={s} value={s}>{`Sector ${s}`}</option>
-                  ))}
-                </select> */}
               </div>
             )}
           </div>
@@ -228,7 +240,7 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
               )}
               {!loading && !err && (
                 <>
-                  {(!visiblePhotos || visiblePhotos.length === 0) ? (
+                  {visiblePhotos.length === 0 ? (
                     <div className="rounded-lg border bg-muted p-6 text-muted-foreground">
                       {selectedSector != null
                         ? `No photos for Sector ${selectedSector}.`
@@ -237,9 +249,10 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
                   ) : (
                     <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
                       {visiblePhotos.map((image) => {
+                        const key = image.id || image._id || `${image.type}-${image.s3Url}`;
                         const src = image.s3Url || image.localUrl;
                         return (
-                          <figure key={image.id} className="shrink-0 w-32">
+                          <figure key={key} className="shrink-0 w-32">
                             <div className="relative group">
                               {src ? (
                                 <img
@@ -257,21 +270,26 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
                                 <Button
                                   size="sm"
                                   variant="secondary"
-                                  onClick={() => setEditingImage(image.id)}
+                                  onClick={() => setEditingImage((image.id || image._id) as string)}
                                 >
                                   <Edit3 className="w-3 h-3" />
                                 </Button>
                               </div>
                             </div>
 
-                            {editingImage === image.id ? (
+                            {(editingImage === image.id || editingImage === image._id) ? (
                               <Input
-                                defaultValue={imageNames[image.id] || image.type || ""}
-                                onBlur={(e) => handleImageNameEdit(image.id, e.target.value)}
+                                defaultValue={imageNames[(image.id || image._id) as string] || image.type || ""}
+                                onBlur={(e) =>
+                                  handleImageNameEdit(
+                                    (image.id || image._id) as string,
+                                    e.target.value
+                                  )
+                                }
                                 onKeyDown={(e) => {
                                   if (e.key === "Enter") {
                                     handleImageNameEdit(
-                                      image.id,
+                                      (image.id || image._id) as string,
                                       (e.target as HTMLInputElement).value
                                     );
                                   }
@@ -282,10 +300,10 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
                             ) : (
                               <figcaption
                                 className="mt-1 text-[10px] text-muted-foreground cursor-pointer hover:text-foreground truncate uppercase tracking-wide"
-                                onClick={() => setEditingImage(image.id)}
-                                title={`${image.type ?? "Photo"} • Sector ${image.sector ?? "?"}`}
+                                onClick={() => setEditingImage((image.id || image._id) as string)}
+                                title={`${image.type ?? "Photo"} • Sector ${getSector(image) ?? "?"}`}
                               >
-                                {imageNames[image.id] || image.type || "PHOTO"}
+                                {imageNames[(image.id || image._id) as string] || image.type || "PHOTO"}
                               </figcaption>
                             )}
                           </figure>
