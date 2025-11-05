@@ -50,11 +50,6 @@ const TYPE_ORDER = [
   "GROUNDING OGB T..."
 ];
 
-const typeIndex = (t?: string) => {
-  const i = TYPE_ORDER.findIndex(x => x.toLowerCase() === String(t || "").toLowerCase());
-  return i === -1 ? 999 : i;
-};
-
 // Try read numeric sector if present
 const readSector = (p: PhotoVM): number | null => {
   const raw = p.sector ?? p.Sector ?? p.meta?.sector ?? null;
@@ -80,7 +75,7 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
   const [imageNames, setImageNames] = useState<Record<string, string>>({});
   const [editingImage, setEditingImage] = useState<string | null>(null);
 
-  // fetch once (we’ll sectorize on the client)
+  // fetch once
   useEffect(() => {
     if (!isOpen || !taskId) return;
     setLoading(true);
@@ -97,93 +92,90 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
 
   const photos: PhotoVM[] = (data?.photos as any[]) ?? [];
 
-  // 1) Group photos by type, sorted by time/id
+  // 1) Group photos by type
   const groupsByType = useMemo(() => {
     const map = new Map<string, PhotoVM[]>();
     photos.forEach((p) => {
-      // --- RECOMMENDED FIX: Normalize key to uppercase to match TYPE_ORDER ---
-      const key = (p.type || "UNKNOWN").toString().toUpperCase();
+      const key = (p.type || "UNKNOWN").toString().toUpperCase(); // Normalized
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(p);
     });
-    // sort each group (so “nth photo” is deterministic)
     for (const [k, arr] of map) arr.sort(byTimeThenId);
     return map;
   }, [photos]);
 
   // 2) Detect available sectors
-  //    If any photo has an explicit sector, we collect those.
-  //    Otherwise we infer sector count = max group size (how many photos per type).
   const sectors = useMemo(() => {
     const explicit = new Set<number>();
     let inferredMax = 0;
 
     for (const arr of groupsByType.values()) {
-      // explicit sectors present?
       arr.forEach((p) => {
         const s = readSector(p);
         if (s !== null) explicit.add(s);
       });
-      // count per type to infer “number of sectors” if explicit missing
       if (arr.length > inferredMax) inferredMax = arr.length;
     }
 
     if (explicit.size > 0) {
       return Array.from(explicit).sort((a, b) => a - b);
     }
-    // infer sectors as 1..max
-    const count = Math.max(1, Math.min(inferredMax, 6)); // safety cap
+    const count = Math.max(1, Math.min(inferredMax, 6));
     return Array.from({ length: count }, (_, i) => i + 1);
   }, [groupsByType]);
 
-  const [selectedSector, setSelectedSector] = useState<number | null>(null);
+  // --- CHANGED 1: State is now a string ---
+  const [selectedSector, setSelectedSector] = useState<string>("");
 
-  // --- FIX 1: This effect now *only* depends on `sectors` ---
-  // This prevents the user's selection from being reset incorrectly.
+  // --- CHANGED 2: useEffect works with strings ---
   useEffect(() => {
     if (sectors.length === 0) {
+      setSelectedSector(""); // Reset to empty string
       return;
     }
 
-    if (selectedSector == null) {
-      // Case 1: No sector is selected (e.g., initial load), default to the first.
-      setSelectedSector(sectors[0]);
-    } else if (!sectors.includes(selectedSector)) {
-      // Case 2: A sector is selected, but it's no longer in the list (e.g., data re-loaded).
-      // Reset to the first valid sector.
-      setSelectedSector(sectors[0]);
+    // Get first sector as a string
+    const firstSector = sectors[0].toString();
+
+    if (selectedSector === "") {
+      // Case 1: No sector selected (initial load)
+      setSelectedSector(firstSector);
+    } else if (!sectors.map(s => s.toString()).includes(selectedSector)) {
+      // Case 2: Selected sector is no longer valid
+      setSelectedSector(firstSector);
     }
     
-  }, [sectors]); // <-- Only depend on `sectors`
+  }, [sectors]); // Only depends on sectors list
 
   // 3) Build the sector view
-  // --- FIX 2: This is the fully corrected logic ---
   const visiblePhotos: PhotoVM[] = useMemo(() => {
-    if (!selectedSector) return [];
+    // --- DEBUGGING: Check your browser console (F12) ---
+    console.log(`--- Re-running visiblePhotos for sector: "${selectedSector}" ---`);
+
+    // --- CHANGED 4: Convert string state to number for logic ---
+    const currentSectorNum = Number(selectedSector);
+    if (!currentSectorNum) {
+      console.log("No valid sector number, returning empty.");
+      return []; // No valid sector selected
+    }
 
     const out: PhotoVM[] = [];
     
     for (const t of TYPE_ORDER) {
       const arr = groupsByType.get(t) || [];
-      if (arr.length === 0) continue; // Skip if no photos for this type
+      if (arr.length === 0) continue; 
 
       let chosen: PhotoVM | undefined = undefined;
       
-      // 1. Check if this specific type-group has *any* explicit sectors.
       const hasExplicitSectors = arr.some((p) => readSector(p) !== null);
 
       if (hasExplicitSectors) {
         // STRATEGY 1: EXPLICIT
-        // This group uses explicit sector tags. Find the one matching the
-        // selected sector. If no photo is tagged for this sector,
-        // we show nothing for this type (which is correct).
-        chosen = arr.find((p) => readSector(p) === selectedSector);
-
+        chosen = arr.find((p) => readSector(p) === currentSectorNum);
+        
       } else {
         // STRATEGY 2: INFERRED (FALLBACK)
-        // This group does *not* use explicit tags.
-        // We fall back to "Nth photo" logic (e.g., Sector 2 -> 2nd photo).
-        const idx = selectedSector - 1;
+        const idx = currentSectorNum - 1; // 1-based index to 0-based
         if (idx >= 0 && idx < arr.length) {
           chosen = arr[idx];
         }
@@ -193,9 +185,10 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
         out.push(chosen);
       }
     }
-    // Keep fixed order by TYPE_ORDER
+    
+    console.log(`--- Found ${out.length} photos for sector ${currentSectorNum} ---`);
     return out;
-  }, [groupsByType, selectedSector]);
+  }, [groupsByType, selectedSector]); // Dependency is now the string state
 
   const rows =
     data
@@ -230,7 +223,7 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
           <DialogTitle className="flex items-center gap-2">
             <ImageIcon className="w-5 h-5" />
             Job Preview — {taskId}
-          </DialogTitle>
+          </DialeftgTitle>
         </DialogHeader>
 
         <Tabs defaultValue="images" className="flex-1 min-h-0 flex flex-col">
@@ -243,9 +236,10 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
             {!!sectors.length && (
               <div className="ml-auto flex items-center gap-2">
                 <span className="text-sm text-muted-foreground">Sector</span>
+                {/* --- CHANGED 3: Select component now uses string state directly --- */}
                 <Select
-                  value={selectedSector?.toString() ?? ""}
-                  onValueChange={(v) => setSelectedSector(Number(v))}
+                  value={selectedSector}
+                  onValueChange={(v) => setSelectedSector(v)}
                 >
                   <SelectTrigger className="w-36">
                     <SelectValue placeholder="Select sector" />
@@ -279,7 +273,7 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
                 <>
                   {(!visiblePhotos || visiblePhotos.length === 0) ? (
                     <div className="rounded-lg border bg-muted p-6 text-muted-foreground">
-                      {selectedSector != null
+                      {selectedSector != ""
                         ? `No photos for Sector ${selectedSector}.`
                         : "No photos yet."}
                     </div>
