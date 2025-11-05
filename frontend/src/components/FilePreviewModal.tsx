@@ -32,13 +32,43 @@ type PhotoVM = {
   s3Url?: string;
   localUrl?: string;
   type?: string;
-  // plus any unknown fields
+  sector?: number | string;
+  Sector?: number | string;
+  sectorNo?: number | string;
+  sectorIndex?: number | string;
+  meta?: { sector?: number | string; [k: string]: any };
+  details?: { sector?: number | string; [k: string]: any };
+  jobSector?: number | string;
   [k: string]: any;
 };
 
-// ——— Helpers ———
+// ===== Helpers =====
+const TYPE_ORDER = [
+  "INSTALLATION",
+  "CLUTTER",
+  "AZIMUTH",
+  "A6 GROUNDING",
+  "CPRI GROUNDING",
+  "POWER TERM A6",
+  "CPRI TERM A6",
+  "TILT",
+  "LABELLING",
+  "ROXTEC",
+  "A6 PANEL",
+  "MCB POWER",
+  "CPRI TERM SWITCH ...",
+  "GROUNDING OGB T...",
+];
 
-// Try multiple places/keys where “sector” might live.
+const idxOfType = (t?: string) => {
+  const i = TYPE_ORDER.findIndex(
+    (x) => x.toLowerCase() === String(t || "").toLowerCase()
+  );
+  return i === -1 ? 999 : i;
+};
+
+// Try every reasonable place a sector value might live.
+// If nothing found, return null.
 function getSector(p: PhotoVM): number | null {
   const raw =
     p.sector ??
@@ -54,30 +84,6 @@ function getSector(p: PhotoVM): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-const TYPE_ORDER = [
-  "INSTALLATION",
-  "CLUTTER",
-  "AZIMUTH",
-  "A6 GROUNDING",
-  "CPRI GROUNDING",
-  "POWER TERM A6",
-  "CPRI TERM A6",
-  "TILT",
-  "LABELLING",
-  "ROXTEC",
-  "A6 PANEL",
-  "MCB POWER",
-  "CPRI TERM SWITCH ...",
-  "GROUNDING OGB T..."
-];
-
-const idxOfType = (t?: string) => {
-  const i = TYPE_ORDER.findIndex(
-    (x) => x.toLowerCase() === String(t || "").toLowerCase()
-  );
-  return i === -1 ? 999 : i;
-};
-
 export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
   const [data, setData] = useState<JobDetail | null>(null);
   const [loading, setLoading] = useState(false);
@@ -88,6 +94,7 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
 
   const [selectedSector, setSelectedSector] = useState<number | null>(null);
 
+  // Fetch job details
   useEffect(() => {
     if (!isOpen || !taskId) return;
     setLoading(true);
@@ -102,24 +109,24 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
 
         const photos = (res.photos as PhotoVM[]) ?? [];
         const sectorList = Array.from(
-          new Set(
-            photos
-              .map(getSector)
-              .filter((n): n is number => n !== null)
-          )
+          new Set(photos.map(getSector).filter((n): n is number => n !== null))
         ).sort((a, b) => a - b);
 
-        // Debug: see what we actually got
+        // Debug once to verify what we actually got
         if (typeof window !== "undefined" && process.env.NODE_ENV !== "production") {
           console.table(
-            photos.slice(0, 20).map((p) => ({
+            photos.slice(0, 24).map((p) => ({
               id: p.id || p._id,
               sector: getSector(p),
               raw_sector: p.sector,
+              Sector: (p as any).Sector,
+              sectorNo: p.sectorNo,
+              sectorIndex: p.sectorIndex,
+              meta_sector: p.meta?.sector,
+              details_sector: p.details?.sector,
               type: p.type,
             }))
           );
-          // Also log the sector list
           console.log("Sectors present:", sectorList);
         }
 
@@ -129,18 +136,16 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
       .finally(() => setLoading(false));
   }, [isOpen, taskId]);
 
-  // Build sector options every render (simple + robust)
+  // Available sector options
   const sectors = useMemo(() => {
-    const photos = (data?.photos as PhotoVM[] | undefined) ?? [];
+    const src = (data?.photos as PhotoVM[] | undefined) ?? [];
     const s = Array.from(
-      new Set(
-        photos.map(getSector).filter((n): n is number => n !== null)
-      )
+      new Set(src.map(getSector).filter((n): n is number => n !== null))
     ).sort((a, b) => a - b);
     return s.length ? s : [1];
   }, [data?.photos]);
 
-  // Keep selectedSector valid if sectors change
+  // Keep selectedSector valid
   useEffect(() => {
     if (selectedSector == null && sectors.length) {
       setSelectedSector(sectors[0]);
@@ -149,7 +154,7 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
     }
   }, [sectors, selectedSector]);
 
-  // Filter and sort photos by sector + type order
+  // Filter + sort
   const visiblePhotos: PhotoVM[] = useMemo(() => {
     const src = (data?.photos as PhotoVM[] | undefined) ?? [];
     const filtered = src.filter((p) => {
@@ -158,6 +163,16 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
     });
     return filtered.sort((a, b) => idxOfType(a.type) - idxOfType(b.type));
   }, [data?.photos, selectedSector]);
+
+  // Count per sector (for a small debug strip in the UI)
+  const sectorCounts = useMemo(() => {
+    const counts = new Map<number, number>();
+    ((data?.photos as PhotoVM[]) || []).forEach((p) => {
+      const s = getSector(p);
+      if (s != null) counts.set(s, (counts.get(s) || 0) + 1);
+    });
+    return Array.from(counts.entries()).sort((a, b) => a[0] - b[0]);
+  }, [data?.photos]);
 
   const handleImageNameEdit = (id: string, value: string) => {
     setImageNames((prev) => ({ ...prev, [id]: value.trim() }));
@@ -180,7 +195,7 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
               ? (data as any).job?.requiredTypes.join(", ")
               : "—",
           },
-          { label: "Total Photos", value: String((data?.photos as any[])?.length ?? 0) },
+          { label: "Total Photos", value: String(((data?.photos as any[])?.length ?? 0)) },
           { label: "Created At", value: String((data as any).job?.createdAt ?? "—") },
         ]
       : [];
@@ -224,6 +239,17 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
               </div>
             )}
           </div>
+
+          {/* Tiny debug strip: shows how many photos per sector present in data */}
+          {sectorCounts.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 mb-2 text-xs text-muted-foreground">
+              {sectorCounts.map(([s, c]) => (
+                <span key={s} className="px-2 py-1 rounded border">
+                  S{s}: {c}
+                </span>
+              ))}
+            </div>
+          )}
 
           {/* ---------- IMAGES TAB ---------- */}
           <TabsContent value="images" className="flex-1 min-h-0">
