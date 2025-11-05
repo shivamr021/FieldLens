@@ -12,7 +12,7 @@ import {
   type JobDetail,
 } from "@/lib/api";
 
-// If you have shadcn Select installed, use it for a nicer dropdown:
+// shadcn Select (fallback <select> snippet kept in comments below)
 import {
   Select,
   SelectContent,
@@ -27,7 +27,16 @@ type Props = {
   onClose: () => void;
 };
 
-// Keep your canonical 14-step order so each sector shows in a consistent layout
+// Local view model for photos (keeps TS happy even if JobDetail is broad)
+type PhotoVM = {
+  id: string;
+  s3Url?: string;
+  localUrl?: string;
+  type?: string;
+  sector?: number | string;
+};
+
+// Keep canonical order so each sector shows in a consistent layout
 const TYPE_ORDER = [
   "INSTALLATION",
   "CLUTTER",
@@ -41,8 +50,8 @@ const TYPE_ORDER = [
   "ROXTEC",
   "A6 PANEL",
   "MCB POWER",
-  "CPRI TERM SWITCH ...", // adjust to exact string if needed
-  "GROUNDING OGB T..."    // adjust to exact string if needed
+  "CPRI TERM SWITCH ...", // adjust to exact strings if needed
+  "GROUNDING OGB T..."    // adjust to exact strings if needed
 ];
 
 const idxOfType = (t?: string) => {
@@ -60,21 +69,10 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
   const [imageNames, setImageNames] = useState<Record<string, string>>({});
   const [editingImage, setEditingImage] = useState<string | null>(null);
 
-  // sector state
-  const sectors = useMemo(() => {
-    if (!data?.photos) return [];
-    const s = Array.from(
-      new Set(
-        data.photos
-          .map((p: any) => Number(p.sector))
-          .filter((n) => !Number.isNaN(n))
-      )
-    ).sort((a, b) => a - b);
-    return s.length ? s : [1]; // fallback to Sector 1 if none found
-  }, [data?.photos]);
-
+  // Which sector is selected in the UI
   const [selectedSector, setSelectedSector] = useState<number | null>(null);
 
+  // Fetch job detail when opened or task changes
   useEffect(() => {
     if (!isOpen || !taskId) return;
     setLoading(true);
@@ -86,7 +84,8 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
     fetchJobDetail(taskId)
       .then((res) => {
         setData(res);
-        // choose default sector once we know available sectors
+
+        // Pick a default sector based on the photos present
         const s = Array.from(
           new Set(
             (res.photos || [])
@@ -94,44 +93,53 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
               .filter((n: number) => !Number.isNaN(n))
           )
         ).sort((a, b) => a - b);
-        setSelectedSector(s.length ? s[0] : 1);
+
+        setSelectedSector(s.length ? s[0] : 1); // default to first or 1
       })
       .catch((e: any) => setErr(e?.message ?? "Failed to load job"))
       .finally(() => setLoading(false));
   }, [isOpen, taskId]);
 
+  // All sectors available in this job (sorted)
+  const sectors = useMemo(() => {
+    const src = (data?.photos as any[] | undefined) ?? [];
+    const s = Array.from(
+      new Set(
+        src
+          .map((p) => Number((p as PhotoVM).sector))
+          .filter((n) => !Number.isNaN(n))
+      )
+    ).sort((a, b) => a - b);
+    return s.length ? s : [1];
+  }, [data?.photos]);
+
+  // Keep selectedSector valid if sectors list changes (e.g., different job)
+  useEffect(() => {
+    if (selectedSector == null && sectors.length) {
+      setSelectedSector(sectors[0]);
+    } else if (selectedSector != null && !sectors.includes(selectedSector)) {
+      setSelectedSector(sectors[0]);
+    }
+  }, [sectors, selectedSector]);
+
+  // Sector-filtered + type-sorted photos for display
+  const visiblePhotos: PhotoVM[] = useMemo(() => {
+    const src = (data?.photos as any[] | undefined) ?? [];
+    const filtered = src.filter(
+      (p) =>
+        selectedSector == null ||
+        Number((p as PhotoVM).sector) === Number(selectedSector)
+    ) as PhotoVM[];
+
+    return [...filtered].sort(
+      (a, b) => idxOfType(a.type) - idxOfType(b.type)
+    );
+  }, [data?.photos, selectedSector]);
+
   const handleImageNameEdit = (id: string, value: string) => {
     setImageNames((prev) => ({ ...prev, [id]: value.trim() }));
     setEditingImage(null);
   };
-
-  // Client-side sector filter + type order
-  const visiblePhotos = useMemo(() => {
-    if (!data?.photos) return [];
-    const filtered = data.photos.filter(
-      (p: any) => selectedSector == null || Number(p.sector) === Number(selectedSector)
-    );
-    return [...filtered].sort((a: any, b: any) => idxOfType(a.type) - idxOfType(b.type));
-  }, [data?.photos, selectedSector]);
-
-  // --- Optional: Server-side fetch when sector changes ---
-  // If you add an API like GET /api/jobs/:id?sector=N, you can use this block instead of the client-side filter above.
-  /*
-  useEffect(() => {
-    if (!isOpen || !taskId || selectedSector == null) return;
-    setLoading(true);
-    setErr(null);
-
-    fetch(`/api/jobs/${taskId}?sector=${selectedSector}`)
-      .then((r) => r.json())
-      .then((res) => {
-        // expecting { job, photos }
-        setData((prev) => (res ? res : prev));
-      })
-      .catch((e) => setErr(e?.message ?? "Failed to load sector photos"))
-      .finally(() => setLoading(false));
-  }, [isOpen, taskId, selectedSector]);
-  */
 
   const rows =
     data
@@ -171,11 +179,10 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
               <TabsTrigger value="excel">Excel</TabsTrigger>
             </TabsList>
 
-            {/* Sector selector on the right */}
-            {sectors.length > 0 && (
+            {/* Sector selector */}
+            {!!sectors.length && (
               <div className="ml-auto flex items-center gap-2">
                 <span className="text-sm text-muted-foreground">Sector</span>
-                {/* shadcn Select */}
                 <Select
                   value={selectedSector?.toString() ?? ""}
                   onValueChange={(v) => setSelectedSector(Number(v))}
@@ -191,17 +198,17 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
                     ))}
                   </SelectContent>
                 </Select>
-                {/* If you don't have shadcn Select, replace the above with:
-                  <select
-                    value={selectedSector ?? ""}
-                    onChange={(e) => setSelectedSector(Number(e.target.value))}
-                    className="border rounded-md px-3 py-2 text-sm"
-                  >
-                    {sectors.map((s) => (
-                      <option key={s} value={s}>{`Sector ${s}`}</option>
-                    ))}
-                  </select>
-                */}
+
+                {/* Fallback if you don't use shadcn Select:
+                <select
+                  value={selectedSector ?? ""}
+                  onChange={(e) => setSelectedSector(Number(e.target.value))}
+                  className="border rounded-md px-3 py-2 text-sm"
+                >
+                  {sectors.map((s) => (
+                    <option key={s} value={s}>{`Sector ${s}`}</option>
+                  ))}
+                </select> */}
               </div>
             )}
           </div>
@@ -229,51 +236,61 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
                     </div>
                   ) : (
                     <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                      {visiblePhotos.map((image: any) => (
-                        <figure key={image.id} className="shrink-0 w-32">
-                          <div className="relative group">
-                            <img
-                              src={image.s3Url}
-                              alt={image.type}
-                              className="w-32 h-32 object-cover rounded-md border"
-                              loading="lazy"
-                            />
-                            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-md flex items-center justify-center">
-                              <Button
-                                size="sm"
-                                variant="secondary"
-                                onClick={() => setEditingImage(image.id)}
-                              >
-                                <Edit3 className="w-3 h-3" />
-                              </Button>
+                      {visiblePhotos.map((image) => {
+                        const src = image.s3Url || image.localUrl;
+                        return (
+                          <figure key={image.id} className="shrink-0 w-32">
+                            <div className="relative group">
+                              {src ? (
+                                <img
+                                  src={src}
+                                  alt={image.type || "Photo"}
+                                  className="w-32 h-32 object-cover rounded-md border"
+                                  loading="lazy"
+                                />
+                              ) : (
+                                <div className="w-32 h-32 flex items-center justify-center text-xs text-gray-400 rounded-md border bg-white">
+                                  No Image
+                                </div>
+                              )}
+                              <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-md flex items-center justify-center">
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  onClick={() => setEditingImage(image.id)}
+                                >
+                                  <Edit3 className="w-3 h-3" />
+                                </Button>
+                              </div>
                             </div>
-                          </div>
-                          {editingImage === image.id ? (
-                            <Input
-                              defaultValue={imageNames[image.id] || image.type}
-                              onBlur={(e) => handleImageNameEdit(image.id, e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  handleImageNameEdit(
-                                    image.id,
-                                    (e.target as HTMLInputElement).value
-                                  );
-                                }
-                              }}
-                              className="mt-1 h-7 text-xs"
-                              autoFocus
-                            />
-                          ) : (
-                            <figcaption
-                              className="mt-1 text-[10px] text-muted-foreground cursor-pointer hover:text-foreground truncate uppercase tracking-wide"
-                              onClick={() => setEditingImage(image.id)}
-                              title={`${image.type} • Sector ${image.sector}`}
-                            >
-                              {imageNames[image.id] || image.type}
-                            </figcaption>
-                          )}
-                        </figure>
-                      ))}
+
+                            {editingImage === image.id ? (
+                              <Input
+                                defaultValue={imageNames[image.id] || image.type || ""}
+                                onBlur={(e) => handleImageNameEdit(image.id, e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    handleImageNameEdit(
+                                      image.id,
+                                      (e.target as HTMLInputElement).value
+                                    );
+                                  }
+                                }}
+                                className="mt-1 h-7 text-xs"
+                                autoFocus
+                              />
+                            ) : (
+                              <figcaption
+                                className="mt-1 text-[10px] text-muted-foreground cursor-pointer hover:text-foreground truncate uppercase tracking-wide"
+                                onClick={() => setEditingImage(image.id)}
+                                title={`${image.type ?? "Photo"} • Sector ${image.sector ?? "?"}`}
+                              >
+                                {imageNames[image.id] || image.type || "PHOTO"}
+                              </figcaption>
+                            )}
+                          </figure>
+                        );
+                      })}
                     </div>
                   )}
                 </>
