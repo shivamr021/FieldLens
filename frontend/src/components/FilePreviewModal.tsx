@@ -101,7 +101,7 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
   const groupsByType = useMemo(() => {
     const map = new Map<string, PhotoVM[]>();
     photos.forEach((p) => {
-      // --- RECOMMENDED: Normalize key to uppercase to match TYPE_ORDER ---
+      // --- RECOMMENDED FIX: Normalize key to uppercase to match TYPE_ORDER ---
       const key = (p.type || "UNKNOWN").toString().toUpperCase();
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(p);
@@ -138,14 +138,10 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
 
   const [selectedSector, setSelectedSector] = useState<number | null>(null);
 
-  // --- CHANGED: This effect now *only* depends on `sectors` ---
+  // --- FIX 1: This effect now *only* depends on `sectors` ---
   // This prevents the user's selection from being reset incorrectly.
   useEffect(() => {
-    // This effect synchronizes the selectedSector *from* the sectors list.
-    // It should only run when the `sectors` list itself changes.
-
     if (sectors.length === 0) {
-      // No sectors, nothing to select.
       return;
     }
 
@@ -158,28 +154,44 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
       setSelectedSector(sectors[0]);
     }
     
-    // Case 3 (Implicit): A sector is selected AND it's still valid. Do nothing.
   }, [sectors]); // <-- Only depend on `sectors`
 
   // 3) Build the sector view
-  //    Prefer explicit sector match; if sector missing, use “nth photo of that type”.
+  // --- FIX 2: This is the fully corrected logic ---
   const visiblePhotos: PhotoVM[] = useMemo(() => {
     if (!selectedSector) return [];
 
     const out: PhotoVM[] = [];
+    
     for (const t of TYPE_ORDER) {
       const arr = groupsByType.get(t) || [];
+      if (arr.length === 0) continue; // Skip if no photos for this type
 
-      // try explicit sector first
-      let chosen = arr.find((p) => readSector(p) === selectedSector);
+      let chosen: PhotoVM | undefined = undefined;
+      
+      // 1. Check if this specific type-group has *any* explicit sectors.
+      const hasExplicitSectors = arr.some((p) => readSector(p) !== null);
 
-      // fallback: nth per type (sector 1 -> index 0)
-      if (!chosen) {
+      if (hasExplicitSectors) {
+        // STRATEGY 1: EXPLICIT
+        // This group uses explicit sector tags. Find the one matching the
+        // selected sector. If no photo is tagged for this sector,
+        // we show nothing for this type (which is correct).
+        chosen = arr.find((p) => readSector(p) === selectedSector);
+
+      } else {
+        // STRATEGY 2: INFERRED (FALLBACK)
+        // This group does *not* use explicit tags.
+        // We fall back to "Nth photo" logic (e.g., Sector 2 -> 2nd photo).
         const idx = selectedSector - 1;
-        if (idx >= 0 && idx < arr.length) chosen = arr[idx];
+        if (idx >= 0 && idx < arr.length) {
+          chosen = arr[idx];
+        }
       }
 
-      if (chosen) out.push(chosen);
+      if (chosen) {
+        out.push(chosen);
+      }
     }
     // Keep fixed order by TYPE_ORDER
     return out;
