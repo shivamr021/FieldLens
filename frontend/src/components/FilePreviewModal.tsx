@@ -11,7 +11,6 @@ import {
   downloadJobXlsxWithImages,
   type JobDetail,
 } from "@/lib/api";
-
 import {
   Select,
   SelectContent,
@@ -20,11 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-type Props = {
-  isOpen: boolean;
-  taskId: string;
-  onClose: () => void;
-};
+type Props = { isOpen: boolean; taskId: string; onClose: () => void };
 
 type PhotoVM = {
   id?: string;
@@ -32,11 +27,12 @@ type PhotoVM = {
   s3Url?: string;
   localUrl?: string;
   type?: string;
-  sector?: number | string;
+  sector?: number | string; // may or may not exist
+  createdAt?: string | number | Date;
   [k: string]: any;
 };
 
-// Canonical order so each sector appears in same layout
+// 14-step canonical order
 const TYPE_ORDER = [
   "INSTALLATION",
   "CLUTTER",
@@ -54,11 +50,26 @@ const TYPE_ORDER = [
   "GROUNDING OGB T..."
 ];
 
-const idxOfType = (t?: string) => {
-  const i = TYPE_ORDER.findIndex(
-    (x) => x.toLowerCase() === String(t || "").toLowerCase()
-  );
+const typeIndex = (t?: string) => {
+  const i = TYPE_ORDER.findIndex(x => x.toLowerCase() === String(t || "").toLowerCase());
   return i === -1 ? 999 : i;
+};
+
+// Try read numeric sector if present
+const readSector = (p: PhotoVM): number | null => {
+  const raw = p.sector ?? p.Sector ?? p.meta?.sector ?? null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+};
+
+// Sort helper for stability (createdAt -> _id)
+const byTimeThenId = (a: PhotoVM, b: PhotoVM) => {
+  const ta = a.createdAt ? new Date(a.createdAt as any).getTime() : 0;
+  const tb = b.createdAt ? new Date(b.createdAt as any).getTime() : 0;
+  if (ta !== tb) return ta - tb;
+  const ai = String(a._id || a.id || "");
+  const bi = String(b._id || b.id || "");
+  return ai.localeCompare(bi);
 };
 
 export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
@@ -69,10 +80,7 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
   const [imageNames, setImageNames] = useState<Record<string, string>>({});
   const [editingImage, setEditingImage] = useState<string | null>(null);
 
-  const [selectedSector, setSelectedSector] = useState<number | null>(null);
-  const [sectorLoading, setSectorLoading] = useState(false);
-
-  // 1) Initial load (no sector filter) just to get job + all photos, and discover which sectors exist
+  // fetch once (we’ll sectorize on the client)
   useEffect(() => {
     if (!isOpen || !taskId) return;
     setLoading(true);
@@ -82,63 +90,82 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
     setEditingImage(null);
 
     fetchJobDetail(taskId)
-      .then((res) => {
-        setData(res);
-        // choose first available sector (1 if none)
-        const s = Array.from(
-          new Set(
-            ((res.photos as any[]) ?? [])
-              .map((p) => Number(p.sector))
-              .filter((n) => Number.isFinite(n))
-          )
-        ).sort((a, b) => a - b);
-        setSelectedSector(s.length ? s[0] : 1);
-      })
+      .then((res) => setData(res))
       .catch((e: any) => setErr(e?.message ?? "Failed to load job"))
       .finally(() => setLoading(false));
   }, [isOpen, taskId]);
 
-  // Build sector options from whatever we received initially
+  const photos: PhotoVM[] = (data?.photos as any[]) ?? [];
+
+  // 1) Group photos by type, sorted by time/id
+  const groupsByType = useMemo(() => {
+    const map = new Map<string, PhotoVM[]>();
+    photos.forEach((p) => {
+      const key = (p.type || "UNKNOWN").toString();
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(p);
+    });
+    // sort each group (so “nth photo” is deterministic)
+    for (const [k, arr] of map) arr.sort(byTimeThenId);
+    return map;
+  }, [photos]);
+
+  // 2) Detect available sectors
+  //    If any photo has an explicit sector, we collect those.
+  //    Otherwise we infer sector count = max group size (how many photos per type).
   const sectors = useMemo(() => {
-    const src = (data?.photos as any[] | undefined) ?? [];
-    const s = Array.from(
-      new Set(src.map((p) => Number(p.sector)).filter((n) => Number.isFinite(n)))
-    ).sort((a, b) => a - b);
-    return s.length ? s : [1];
-  }, [data?.photos]);
+    const explicit = new Set<number>();
+    let inferredMax = 0;
 
-  // 2) When sector changes, fetch server-filtered photos
+    for (const arr of groupsByType.values()) {
+      // explicit sectors present?
+      arr.forEach((p) => {
+        const s = readSector(p);
+        if (s !== null) explicit.add(s);
+      });
+      // count per type to infer “number of sectors” if explicit missing
+      if (arr.length > inferredMax) inferredMax = arr.length;
+    }
+
+    if (explicit.size > 0) {
+      return Array.from(explicit).sort((a, b) => a - b);
+    }
+    // infer sectors as 1..max
+    const count = Math.max(1, Math.min(inferredMax, 6)); // safety cap
+    return Array.from({ length: count }, (_, i) => i + 1);
+  }, [groupsByType]);
+
+  const [selectedSector, setSelectedSector] = useState<number | null>(null);
   useEffect(() => {
-    if (!isOpen || !taskId || selectedSector == null) return;
-    setSectorLoading(true);
-    setErr(null);
+    if (selectedSector == null && sectors.length) setSelectedSector(sectors[0]);
+    else if (selectedSector != null && !sectors.includes(selectedSector)) {
+      setSelectedSector(sectors[0]);
+    }
+  }, [sectors, selectedSector]);
 
-    // Use the same shape as fetchJobDetail returns: { job, photos }
-    fetch(`/api/jobs/${taskId}?sector=${selectedSector}&t=${Date.now()}`, {
-      headers: { "cache-control": "no-cache" },
-    })
-      .then(async (r) => {
-        if (!r.ok) throw new Error(`Sector fetch failed (${r.status})`);
-        const res = await r.json();
-        // keep job from previous, but replace photos with server-filtered
-        setData((prev) => ({
-          ...(res?.job ? res : { job: prev?.job, photos: res?.photos ?? [] }),
-        }) as JobDetail);
-      })
-      .catch((e: any) => setErr(e?.message ?? "Failed to load sector photos"))
-      .finally(() => setSectorLoading(false));
-  }, [isOpen, taskId, selectedSector]);
+  // 3) Build the sector view
+  //    Prefer explicit sector match; if sector missing, use “nth photo of that type”.
+  const visiblePhotos: PhotoVM[] = useMemo(() => {
+    if (!selectedSector) return [];
 
-  // 3) Sort (server already filtered by sector)
-  const photosSorted = useMemo(() => {
-    const src = (data?.photos as PhotoVM[] | undefined) ?? [];
-    return [...src].sort((a, b) => idxOfType(a.type) - idxOfType(b.type));
-  }, [data?.photos]);
+    const out: PhotoVM[] = [];
+    for (const t of TYPE_ORDER) {
+      const arr = groupsByType.get(t) || [];
 
-  const handleImageNameEdit = (id: string, value: string) => {
-    setImageNames((prev) => ({ ...prev, [id]: value.trim() }));
-    setEditingImage(null);
-  };
+      // try explicit sector first
+      let chosen = arr.find((p) => readSector(p) === selectedSector);
+
+      // fallback: nth per type (sector 1 -> index 0)
+      if (!chosen) {
+        const idx = selectedSector - 1;
+        if (idx >= 0 && idx < arr.length) chosen = arr[idx];
+      }
+
+      if (chosen) out.push(chosen);
+    }
+    // Keep fixed order by TYPE_ORDER
+    return out;
+  }, [groupsByType, selectedSector]);
 
   const rows =
     data
@@ -161,6 +188,11 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
         ]
       : [];
 
+  const handleImageNameEdit = (id: string, value: string) => {
+    setImageNames((prev) => ({ ...prev, [id]: value.trim() }));
+    setEditingImage(null);
+  };
+
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-6xl h-[80vh] flex flex-col">
@@ -178,7 +210,6 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
               <TabsTrigger value="excel">Excel</TabsTrigger>
             </TabsList>
 
-            {/* Sector selector */}
             {!!sectors.length && (
               <div className="ml-auto flex items-center gap-2">
                 <span className="text-sm text-muted-foreground">Sector</span>
@@ -204,9 +235,9 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
           {/* ---------- IMAGES TAB ---------- */}
           <TabsContent value="images" className="flex-1 min-h-0">
             <div className="h-full overflow-y-auto">
-              {(loading || sectorLoading) && (
+              {loading && (
                 <div className="rounded-lg border bg-muted p-6 text-muted-foreground">
-                  {loading ? "Loading details…" : `Loading Sector ${selectedSector} photos…`}
+                  Loading details…
                 </div>
               )}
               {err && (
@@ -214,9 +245,9 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
                   {err}
                 </div>
               )}
-              {!loading && !sectorLoading && !err && (
+              {!loading && !err && (
                 <>
-                  {!photosSorted.length ? (
+                  {(!visiblePhotos || visiblePhotos.length === 0) ? (
                     <div className="rounded-lg border bg-muted p-6 text-muted-foreground">
                       {selectedSector != null
                         ? `No photos for Sector ${selectedSector}.`
@@ -224,7 +255,7 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
                     </div>
                   ) : (
                     <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                      {photosSorted.map((image) => {
+                      {visiblePhotos.map((image) => {
                         const key = image.id || image._id || `${image.type}-${image.s3Url}`;
                         const src = image.s3Url || image.localUrl;
                         return (
@@ -317,26 +348,7 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
                     </tr>
                   </thead>
                   <tbody>
-                    {(data
-                      ? [
-                          { label: "Job ID", value: taskId },
-                          { label: "Worker Phone", value: (data as any).job?.workerPhone ?? "—" },
-                          { label: "Status", value: (data as any).job?.status ?? "—" },
-                          { label: "Sector", value: (data as any).job?.sector ?? "—" },
-                          { label: "MAC_Id", value: (data as any).job?.macId ?? "—" },
-                          { label: "RSN_Id", value: (data as any).job?.rsnId ?? "—" },
-                          { label: "AZIMUTH_Deg", value: (data as any).job?.azimuthDeg ?? "—" },
-                          {
-                            label: "Required Types",
-                            value: Array.isArray((data as any).job?.requiredTypes)
-                              ? (data as any).job?.requiredTypes.join(", ")
-                              : "—",
-                          },
-                          { label: "Total Photos", value: String((data?.photos as any[])?.length ?? 0) },
-                          { label: "Created At", value: String((data as any).job?.createdAt ?? "—") },
-                        ]
-                      : []
-                    ).map((row, idx) => (
+                    {rows.map((row, idx) => (
                       <tr key={idx} className="border-t">
                         <td className="p-3 font-medium">{row.label}</td>
                         <td className="p-3">{row.value}</td>
@@ -349,11 +361,8 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
           </TabsContent>
         </Tabs>
 
-        {/* ---------- FOOTER ---------- */}
         <div className="shrink-0 flex justify-end gap-2 pt-4 border-t">
-          <Button variant="outline" onClick={onClose}>
-            Close
-          </Button>
+          <Button variant="outline" onClick={onClose}>Close</Button>
           <Button onClick={() => downloadJobXlsxWithImages(taskId)} disabled={!data || loading}>
             <Download className="w-4 h-4 mr-2" />
             Download Excel (with images)
