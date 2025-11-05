@@ -33,16 +33,10 @@ type PhotoVM = {
   localUrl?: string;
   type?: string;
   sector?: number | string;
-  Sector?: number | string;
-  sectorNo?: number | string;
-  sectorIndex?: number | string;
-  meta?: { sector?: number | string; [k: string]: any };
-  details?: { sector?: number | string; [k: string]: any };
-  jobSector?: number | string;
   [k: string]: any;
 };
 
-// ===== Helpers =====
+// Canonical order so each sector appears in same layout
 const TYPE_ORDER = [
   "INSTALLATION",
   "CLUTTER",
@@ -56,8 +50,8 @@ const TYPE_ORDER = [
   "ROXTEC",
   "A6 PANEL",
   "MCB POWER",
-  "CPRI TERM SWITCH ...",
-  "GROUNDING OGB T...",
+  "CPRI TERM SWITCH ...", // adjust if your exact strings differ
+  "GROUNDING OGB T..."
 ];
 
 const idxOfType = (t?: string) => {
@@ -66,23 +60,6 @@ const idxOfType = (t?: string) => {
   );
   return i === -1 ? 999 : i;
 };
-
-// Try every reasonable place a sector value might live.
-// If nothing found, return null.
-function getSector(p: PhotoVM): number | null {
-  const raw =
-    p.sector ??
-    p.Sector ??
-    p.sectorNo ??
-    p.sectorIndex ??
-    p.meta?.sector ??
-    p.details?.sector ??
-    p.jobSector ??
-    null;
-
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : null;
-}
 
 export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
   const [data, setData] = useState<JobDetail | null>(null);
@@ -93,8 +70,9 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
   const [editingImage, setEditingImage] = useState<string | null>(null);
 
   const [selectedSector, setSelectedSector] = useState<number | null>(null);
+  const [sectorLoading, setSectorLoading] = useState(false);
 
-  // Fetch job details
+  // 1) Initial load (no sector filter) just to get job + all photos, and discover which sectors exist
   useEffect(() => {
     if (!isOpen || !taskId) return;
     setLoading(true);
@@ -106,72 +84,55 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
     fetchJobDetail(taskId)
       .then((res) => {
         setData(res);
-
-        const photos = (res.photos as PhotoVM[]) ?? [];
-        const sectorList = Array.from(
-          new Set(photos.map(getSector).filter((n): n is number => n !== null))
+        // choose first available sector (1 if none)
+        const s = Array.from(
+          new Set(
+            ((res.photos as any[]) ?? [])
+              .map((p) => Number(p.sector))
+              .filter((n) => Number.isFinite(n))
+          )
         ).sort((a, b) => a - b);
-
-        // Debug once to verify what we actually got
-        if (typeof window !== "undefined" && process.env.NODE_ENV !== "production") {
-          console.table(
-            photos.slice(0, 24).map((p) => ({
-              id: p.id || p._id,
-              sector: getSector(p),
-              raw_sector: p.sector,
-              Sector: (p as any).Sector,
-              sectorNo: p.sectorNo,
-              sectorIndex: p.sectorIndex,
-              meta_sector: p.meta?.sector,
-              details_sector: p.details?.sector,
-              type: p.type,
-            }))
-          );
-          console.log("Sectors present:", sectorList);
-        }
-
-        setSelectedSector(sectorList.length ? sectorList[0] : 1);
+        setSelectedSector(s.length ? s[0] : 1);
       })
       .catch((e: any) => setErr(e?.message ?? "Failed to load job"))
       .finally(() => setLoading(false));
   }, [isOpen, taskId]);
 
-  // Available sector options
+  // Build sector options from whatever we received initially
   const sectors = useMemo(() => {
-    const src = (data?.photos as PhotoVM[] | undefined) ?? [];
+    const src = (data?.photos as any[] | undefined) ?? [];
     const s = Array.from(
-      new Set(src.map(getSector).filter((n): n is number => n !== null))
+      new Set(src.map((p) => Number(p.sector)).filter((n) => Number.isFinite(n)))
     ).sort((a, b) => a - b);
     return s.length ? s : [1];
   }, [data?.photos]);
 
-  // Keep selectedSector valid
+  // 2) When sector changes, fetch server-filtered photos
   useEffect(() => {
-    if (selectedSector == null && sectors.length) {
-      setSelectedSector(sectors[0]);
-    } else if (selectedSector != null && !sectors.includes(selectedSector)) {
-      setSelectedSector(sectors[0]);
-    }
-  }, [sectors, selectedSector]);
+    if (!isOpen || !taskId || selectedSector == null) return;
+    setSectorLoading(true);
+    setErr(null);
 
-  // Filter + sort
-  const visiblePhotos: PhotoVM[] = useMemo(() => {
+    // Use the same shape as fetchJobDetail returns: { job, photos }
+    fetch(`/api/jobs/${taskId}?sector=${selectedSector}&t=${Date.now()}`, {
+      headers: { "cache-control": "no-cache" },
+    })
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`Sector fetch failed (${r.status})`);
+        const res = await r.json();
+        // keep job from previous, but replace photos with server-filtered
+        setData((prev) => ({
+          ...(res?.job ? res : { job: prev?.job, photos: res?.photos ?? [] }),
+        }) as JobDetail);
+      })
+      .catch((e: any) => setErr(e?.message ?? "Failed to load sector photos"))
+      .finally(() => setSectorLoading(false));
+  }, [isOpen, taskId, selectedSector]);
+
+  // 3) Sort (server already filtered by sector)
+  const photosSorted = useMemo(() => {
     const src = (data?.photos as PhotoVM[] | undefined) ?? [];
-    const filtered = src.filter((p) => {
-      const s = getSector(p);
-      return selectedSector == null ? true : s === selectedSector;
-    });
-    return filtered.sort((a, b) => idxOfType(a.type) - idxOfType(b.type));
-  }, [data?.photos, selectedSector]);
-
-  // Count per sector (for a small debug strip in the UI)
-  const sectorCounts = useMemo(() => {
-    const counts = new Map<number, number>();
-    ((data?.photos as PhotoVM[]) || []).forEach((p) => {
-      const s = getSector(p);
-      if (s != null) counts.set(s, (counts.get(s) || 0) + 1);
-    });
-    return Array.from(counts.entries()).sort((a, b) => a[0] - b[0]);
+    return [...src].sort((a, b) => idxOfType(a.type) - idxOfType(b.type));
   }, [data?.photos]);
 
   const handleImageNameEdit = (id: string, value: string) => {
@@ -195,7 +156,7 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
               ? (data as any).job?.requiredTypes.join(", ")
               : "—",
           },
-          { label: "Total Photos", value: String(((data?.photos as any[])?.length ?? 0)) },
+          { label: "Total Photos", value: String((data?.photos as any[])?.length ?? 0) },
           { label: "Created At", value: String((data as any).job?.createdAt ?? "—") },
         ]
       : [];
@@ -240,23 +201,12 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
             )}
           </div>
 
-          {/* Tiny debug strip: shows how many photos per sector present in data */}
-          {sectorCounts.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2 mb-2 text-xs text-muted-foreground">
-              {sectorCounts.map(([s, c]) => (
-                <span key={s} className="px-2 py-1 rounded border">
-                  S{s}: {c}
-                </span>
-              ))}
-            </div>
-          )}
-
           {/* ---------- IMAGES TAB ---------- */}
           <TabsContent value="images" className="flex-1 min-h-0">
             <div className="h-full overflow-y-auto">
-              {loading && (
+              {(loading || sectorLoading) && (
                 <div className="rounded-lg border bg-muted p-6 text-muted-foreground">
-                  Loading details…
+                  {loading ? "Loading details…" : `Loading Sector ${selectedSector} photos…`}
                 </div>
               )}
               {err && (
@@ -264,9 +214,9 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
                   {err}
                 </div>
               )}
-              {!loading && !err && (
+              {!loading && !sectorLoading && !err && (
                 <>
-                  {visiblePhotos.length === 0 ? (
+                  {!photosSorted.length ? (
                     <div className="rounded-lg border bg-muted p-6 text-muted-foreground">
                       {selectedSector != null
                         ? `No photos for Sector ${selectedSector}.`
@@ -274,7 +224,7 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
                     </div>
                   ) : (
                     <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                      {visiblePhotos.map((image) => {
+                      {photosSorted.map((image) => {
                         const key = image.id || image._id || `${image.type}-${image.s3Url}`;
                         const src = image.s3Url || image.localUrl;
                         return (
@@ -327,7 +277,7 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
                               <figcaption
                                 className="mt-1 text-[10px] text-muted-foreground cursor-pointer hover:text-foreground truncate uppercase tracking-wide"
                                 onClick={() => setEditingImage((image.id || image._id) as string)}
-                                title={`${image.type ?? "Photo"} • Sector ${getSector(image) ?? "?"}`}
+                                title={`${image.type ?? "Photo"}`}
                               >
                                 {imageNames[(image.id || image._id) as string] || image.type || "PHOTO"}
                               </figcaption>
@@ -367,7 +317,26 @@ export default function FilePreviewModal({ isOpen, taskId, onClose }: Props) {
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.map((row, idx) => (
+                    {(data
+                      ? [
+                          { label: "Job ID", value: taskId },
+                          { label: "Worker Phone", value: (data as any).job?.workerPhone ?? "—" },
+                          { label: "Status", value: (data as any).job?.status ?? "—" },
+                          { label: "Sector", value: (data as any).job?.sector ?? "—" },
+                          { label: "MAC_Id", value: (data as any).job?.macId ?? "—" },
+                          { label: "RSN_Id", value: (data as any).job?.rsnId ?? "—" },
+                          { label: "AZIMUTH_Deg", value: (data as any).job?.azimuthDeg ?? "—" },
+                          {
+                            label: "Required Types",
+                            value: Array.isArray((data as any).job?.requiredTypes)
+                              ? (data as any).job?.requiredTypes.join(", ")
+                              : "—",
+                          },
+                          { label: "Total Photos", value: String((data?.photos as any[])?.length ?? 0) },
+                          { label: "Created At", value: String((data as any).job?.createdAt ?? "—") },
+                        ]
+                      : []
+                    ).map((row, idx) => (
                       <tr key={idx} className="border-t">
                         <td className="p-3 font-medium">{row.label}</td>
                         <td className="p-3">{row.value}</td>
